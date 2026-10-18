@@ -34,6 +34,27 @@ mkdir -p "$V/share" "$V/etc"
 rm -rf "$V/lib"
 cp -a "$SRC_LIB" "$V/lib"
 
+# Libs de SISTEMA que ficam FORA do bundle /usr/lib/ardour9, mas que os .so do
+# bundle usam (NEEDED), puxadas pelo pacote `ardour` como dependencias:
+#   libvamp-hostsdk/libvamp-sdk (vamp-plugin-sdk) -> libardour.so/libaudiographer.so
+#     e vamp/libardourvampplugins.so;
+#   libwebsockets + evlibs (libwebsockets) -> surfaces/libardour_websockets.so e
+#     surfaces/libardour_mcp_http.so, carregadas pelo ControlProtocolManager no boot;
+#   libaubio (aubio) -> vamp/libardourvampplugins.so;  libev -> evlib do libwebsockets.
+# Copiamos para o vendor para o SPECTER nao depender desses pacotes em runtime.
+SRC_SYS=/usr/lib
+for base in libvamp-hostsdk.so libvamp-sdk.so libwebsockets.so \
+            libwebsockets-evlib_ev.so libwebsockets-evlib_glib.so libwebsockets-evlib_uv.so \
+            libev.so libaubio.so; do
+  ok=0
+  for f in "$SRC_SYS/$base"*; do
+    [ -e "$f" ] || continue
+    cp -a "$f" "$V/lib/"
+    ok=1
+  done
+  [ "$ok" = 1 ] || printf 'aviso: %s* nao encontrada em %s (instale o pacote de origem)\n' "$base" "$SRC_SYS" >&2
+done
+
 ( cd "$SRC_SHARE" && for x in *; do
     case "$x" in
       media|web_surfaces)
@@ -56,6 +77,7 @@ cp -a "$SRC_ETC/." "$V/etc/"
   printf 'lib/ = /usr/lib/ardour9 completo (bundle; inclui glibc-hwcaps, LV2, backends, engines, panners, surfaces, utils, vamp, fst, ladspa)\n'
   printf 'share/ = /usr/share/ardour9 exceto media/ e web_surfaces/ (clip browser e surfaces web do gtk2_ardour)\n'
   printf 'etc/ = /etc/ardour9 (system_config, keys/menus, clearlooks)\n'
+  printf 'lib/ extra (fora do bundle): libvamp-hostsdk.so.3, libvamp-sdk.so.2, libwebsockets.so.21 (+evlibs), libev.so.4 e libaubio.so.5 copiadas de /usr/lib (pacotes vamp-plugin-sdk, libwebsockets, libev, aubio)\n'
   printf 'refresh: tools/vendor-ardour.sh\n'
 } > "$V/VERSION.txt"
 

@@ -1,17 +1,23 @@
 Pacotes instalados para a RE / FASE 4 do SPECTER (binário único) e o que fazer
 com cada um. Ordem pensada para desinstalar sem quebrar NADA.
 
-=== 1. JÁ PODE REMOVER: ardour (9.8-1) ===
-O SPECTER roda 100% com o runtime EMBUTIDO em fase4/vendor/ardour/
-(lib = /usr/lib/ardour9, share = /usr/share/ardour9 sem media/, etc = /etc/ardour9).
-Provado em 17/10/2026 com os três diretórios do sistema ESCONDIDOS
-(unshare -rm + tmpfs em /usr/lib/ardour9, /usr/share/ardour9, /etc/ardour9):
-  - ./spook-audio --self-test  -> self-test: TUDO OK (binário direto e via app.sh)
-  - UI headless completa (abas 0/1/6: mixer, arranger com seções, catálogo de
-    plugins) -> rc=0 nas 3.
-Ele TAMBÉM não é mais preciso para COMPILAR: headers em fase4/src/ardour e .so
-no vendor. Comando (você digita a senha; confira a lista que o pacman mostra):
-    sudo pacman -Rns ardour
+=== 1. REMOVIDO em 17/10/2026: ardour (9.8-1) ===
+`sudo pacman -Rns ardour` também levou 4 dependências órfãs da cadeia dele:
+aubio, libev, libwebsockets e vamp-plugin-sdk. Nada quebrou, porque as libs
+de sistema que o runtime EMBUTIDO (fase4/vendor/ardour) usa são vendorizadas
+(copiadas do cache do pacman para vendor/ardour/lib; o bloco novo do
+tools/vendor-ardour.sh as re-copia e o VERSION.txt documenta a origem):
+    libvamp-hostsdk.so.3 + libvamp-sdk.so.2  (NEEDED de libardour/libaudiographer
+                                              e de vamp/libardourvampplugins.so)
+    libwebsockets.so.21 + evlibs             (surfaces carregadas no boot; o erro
+                                              "ControlProtocolManager: cannot load
+                                              module" sumiu com ela no vendor)
+    libev.so.4 e libaubio.so.5               (dep do evlib / vamp plugins)
+Validação no sistema limpo (sem ardour/aubio/libev/libwebsockets/vamp-plugin-sdk):
+  - ./app.sh --self-test -> self-test: TUDO OK
+  - UI headless abas 0/1/6 -> rc=0, log sem erros de surface
+  - varredura de TODOS os .so do vendor -> 100% resolvem (vendor + sistema)
+Para COMPILAR também não precisa: headers em fase4/src/ardour + .so no vendor.
 
 === 2. MANTER (por enquanto): boost (1.92.0-1) ===
 Necessário apenas para COMPILAR (os headers do libardour incluem

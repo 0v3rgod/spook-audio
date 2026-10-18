@@ -4,4 +4,6 @@ copiado: 2026-10-17T22:15:37-03:00
 lib/ = /usr/lib/ardour9 completo (bundle; inclui glibc-hwcaps, LV2, backends, engines, panners, surfaces, utils, vamp, fst, ladspa)
 share/ = /usr/share/ardour9 exceto media/ e web_surfaces/ (clip browser e surfaces web do gtk2_ardour)
 etc/ = /etc/ardour9 (system_config, keys/menus, clearlooks)
+lib/ extra (fora do bundle): libvamp-hostsdk.so.3, libvamp-sdk.so.2, libwebsockets.so.21 (+evlibs), libev.so.4 e libaubio.so.5 copiadas de /usr/lib (pacotes vamp-plugin-sdk, libwebsockets, libev, aubio)
+pacote ardour REMOVIDO do sistema em 17/10/2026; nada aqui depende dele (self-test + UI headless validados sem ele)
 refresh: tools/vendor-ardour.sh

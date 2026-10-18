@@ -49,8 +49,9 @@ Backend por app: `pw-jack ardour9` (JACK) · `ardour9` (ALSA) · nativo (PipeWir
   encerra limpo — com backend **Dummy** (nada de som tocado). Detalhes, o bug de ABI
   de 16 bytes que custou o dia e o `tools/abi-check.sh` em **`fase4/PoC-ENGINE.md`**.
   **Consolidada em 17/10/2026 como SPECTER** com o runtime do Ardour EMBUTIDO
-  (`fase4/vendor/ardour/`) — o pacote `ardour` não é mais necessário em runtime
-  nem para compilar. Ver "SPECTER — o estado final" no fim deste README.
+  (`fase4/vendor/ardour/`) — o pacote `ardour` foi REMOVIDO do sistema no mesmo
+  dia: não era mais necessário em runtime nem para compilar. Ver "SPECTER — o
+  estado final" no fim deste README.
 
 ## Fase 2 — como ficou
 
@@ -287,13 +288,17 @@ O app (nome visível **SPECTER**, app id/WM class `com.taylor.specter`, atalho
   libardour. O `spook/core/engine.cc` define sozinho `ARDOUR_DLL_PATH/
   ARDOUR_DATA_PATH/ARDOUR_CONFIG_PATH/VAMP_PATH` a partir de
   `/proc/self/exe`: mover a pasta do projeto não quebra nada.
-- **Prova de autonomia** (pacote `ardour` invisível — `unshare -rm` + tmpfs em
-  /usr/lib/ardour9, /usr/share/ardour9 e /etc/ardour9): `--self-test` =
-  `TUDO OK` (binário direto e via `app.sh`); UI headless completa nas abas
-  MIXER, ARRANJO (seções Intro/Verso reais) e PLUGINS (catálogo ACE
-  EQ/Compressor/Delay/Reverb/Fluid Synth/Reasonable Synth saindo do vendor)
-  com `rc=0`. Ordem de desinstalação em `fase4/PACOTES-PARA-REMOVER.txt` —
-  o pacote `ardour` já pode sair; `boost` fica só para COMPILAR.
+- **Prova de autonomia**: primeiro com o pacote `ardour` invisível (`unshare -rm`
+  + tmpfs em /usr/lib/ardour9, /usr/share/ardour9 e /etc/ardour9) e depois no
+  sistema de verdade — **o pacote `ardour` foi REMOVIDO em 17/10/2026** (junto
+  foram as órfãs aubio/libev/libwebsockets/vamp-plugin-sdk). O vendor tem também
+  as libs de sistema que o bundle usa fora de /usr/lib/ardour9
+  (`libvamp-hostsdk`, `libvamp-sdk`, `libwebsockets` + evlibs, `libev`,
+  `libaubio` — ver `vendor/ardour/VERSION.txt`): `--self-test` = `TUDO OK` e UI
+  headless nas abas MIXER, ARRANJO (seções Intro/Verso reais) e PLUGINS
+  (catálogo ACE EQ/Compressor/Delay/Reverb/Fluid Synth/Reasonable Synth saindo
+  do vendor) com `rc=0` — sem os erros de surface/protocolo de antes. `boost`
+  fica só para COMPILAR; ordem restante em `fase4/PACOTES-PARA-REMOVER.txt`.
 - **Build**: `cd fase4 && ./build-app.sh && ./app.sh --self-test` (gtkmm-3.0,
   alsa, libxml2 + headers do boost; nunca gtkmm-4 — regra de ABI do
   `PoC-ENGINE.md`). Atualizar o runtime embutido depois de um upgrade do
