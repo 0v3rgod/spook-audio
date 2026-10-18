@@ -229,7 +229,18 @@ Daw::set_record_enabled (bool on)
 void
 Daw::arm_all (bool on)
 {
-	if (_session) { _session->set_all_tracks_record_enabled (on); }
+	if (!_session) { return; }
+	/* O Session::set_all_tracks_record_enabled() do Ardour não pega nestas
+	 * rotas (a lista interna de tracks do Session fica vazia para as trilhas
+	 * criadas por aqui — confirmado na prática: "ARMAR TODAS" era no-op).
+	 * Arma direto pelo rec_enable_control, como o set_arm() por trilha. */
+	const std::vector<Route*> rs = ordered_routes ();
+	for (size_t i = 0; i < rs.size (); ++i) {
+		Track* t = dynamic_cast<Track*> (rs[i]);
+		if (t && t->rec_enable_control ()) {
+			t->rec_enable_control ()->set_value (on ? 1.0 : 0.0, PBD::Controllable::NoGroup);
+		}
+	}
 }
 
 /* ------------------------------------------------------------------ TEMPO */
@@ -914,6 +925,15 @@ void
 Daw::clear_solo ()
 {
 	if (_ui) { _ui->cancel_all_solo (); }
+	/* O cancel_all_solo() do _ui (protocolo) não limpa os solos destas
+	 * rotas (mesmo sintoma do arm_all). Desliga direto no solo_control. */
+	if (!_session) { return; }
+	const std::vector<Route*> rs = ordered_routes ();
+	for (size_t i = 0; i < rs.size (); ++i) {
+		if (rs[i] && rs[i]->solo_control ()) {
+			rs[i]->solo_control ()->set_value (0.0, PBD::Controllable::NoGroup);
+		}
+	}
 }
 
 /* ------------------------------------------------------------------ SESSÃO */
