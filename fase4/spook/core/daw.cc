@@ -1011,12 +1011,14 @@ Daw::remove_route (int idx, std::string& err)
 	Route* r = route_at (idx);
 	if (!r) { err = "rota inexistente"; return false; }
 	if (r->is_master () || r->is_monitor ()) { err = "não dá para apagar o master/monitor"; return false; }
-	/* a lista guarda shared_ptr: pega o dono antes de mandar remover */
+	/* a lista guarda shared_ptr: pega o dono antes de mandar remover.
+	 * Compara POR PONTEIRO com route_at(idx): a ordem de get_routes() NÃO é
+	 * a mesma de ordered_routes(), então casar por índice aqui apagava OUTRA
+	 * rota (bug do "REMOVER ÚLTIMA" apagar a trilha errada). */
 	std::shared_ptr<Route> alvo;
 	std::shared_ptr<RouteList const> routes = _session->get_routes ();
-	int n = 0;
-	for (RouteList::const_iterator i = routes->begin (); i != routes->end (); ++i, ++n) {
-		if (n == idx) { alvo = *i; break; }
+	for (RouteList::const_iterator i = routes->begin (); i != routes->end (); ++i) {
+		if (i->get () == r) { alvo = *i; break; }
 	}
 	if (!alvo) { err = "rota inexistente"; return false; }
 	_session->remove_route (alvo);
