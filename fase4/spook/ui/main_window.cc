@@ -606,6 +606,10 @@ cpu_load (double& prev_total, double& prev_idle)
 	return pct;
 }
 
+/* minúsculas ASCII (definição mais abaixo, junto da aba SCARLETT): o
+ * construtor usa para achar o backend default sem depender de caixa. */
+std::string minusculas (std::string s);
+
 } // namespace
 
 /* ============================================================= construção */
@@ -667,7 +671,30 @@ MainWindow::MainWindow ()
 	/* backends (o Dummy entra por último; ver core/engine.cc) */
 	std::vector<std::string> bs = _engine->available_backends ();
 	for (size_t i = 0; i < bs.size (); ++i) { _backend_combo->append (bs[i]); }
-	_backend_combo->set_active_text ("None (Dummy)"); /* modo seguro: nao toca som */
+
+	/* Default = "JACK/Pipewire": som de verdade (grava e reproduz). O "None
+	 * (Dummy)" fica só de reserva — com ele o motor processa silêncio sem
+	 * abrir dispositivo de som, então tudo que for gravado sai mudo (-91
+	 * dB) e a reprodução também. O combo nascia fixo no Dummy ("modo
+	 * seguro") e era o bug do "gravei e não ouvi nada". */
+	{
+		Glib::RefPtr<Gtk::TreeModel> m = _backend_combo->get_model ();
+		int idx = 0, achou = -1;
+		if (m) {
+			Gtk::TreeModel::Children kids = m->children ();
+			for (Gtk::TreeModel::iterator it = kids.begin (); it != kids.end (); ++it, ++idx) {
+				Glib::ustring txt;
+				it->get_value (0, txt);
+				const std::string l = minusculas (txt.raw ());
+				if (l.find ("jack") != std::string::npos || l.find ("pipewire") != std::string::npos) {
+					achou = idx;
+					break;
+				}
+			}
+		}
+		if (achou >= 0) { _backend_combo->set_active (achou); }
+		else            { _backend_combo->set_active_text ("None (Dummy)"); } /* modo seguro: nao toca som */
+	}
 
 	_sess_dir->set_text (default_session_dir ());
 
@@ -2413,7 +2440,8 @@ MainWindow::build_engine_tab ()
 	btns->pack_start (*_btn_stop2, false, false, 0);
 	c1->pack_start (*btns, false, false, 0);
 	c1->pack_start (*dim ("O backend \"None (Dummy)\" é o modo seguro: sobe o motor e processa "
-	                      "silêncio, sem abrir dispositivo de som."), false, false, 0);
+	                      "silêncio, sem abrir dispositivo de som. O padrão é o \"JACK/Pipewire\", "
+	                      "que grava e reproduz de verdade."), false, false, 0);
 	b->pack_start (*c1, false, false, 0);
 
 	Gtk::Box* c2 = card ("ESTADO DO MOTOR");
