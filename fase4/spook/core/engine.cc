@@ -208,6 +208,21 @@ Engine::select_backend (std::string const& name, std::string const& device, std:
 		err = "nao consegui set_backend(\"" + name + "\")";
 		return false;
 	}
+	/* O device nao vai pelos argumentos do set_backend: o instantiate() do
+	 * backend ALSA ignora o 2o argumento (ver audioengine.cc). O caminho
+	 * oficial e set_device_name(), depois do backend criado e antes do
+	 * start() — sem isto o campo Dispositivo da aba ENGINE nao tem efeito.
+	 * Retorno: >0 = nome invalido (ALSA); <0 = backend nao usa device (JACK). */
+	if (!device.empty ()) {
+		int dr = _engine->set_device_name (device);
+		if (dr > 0) {
+			err = "dispositivo nao encontrado: \"" + device + "\" (" + name + ")";
+			return false;
+		}
+		if (dr < 0) {
+			log_line ("[ENGINE] backend " + name + " nao usa dispositivo — ignorando \"" + device + "\"");
+		}
+	}
 	log_line ("[ENGINE] backend = " + name + (device.empty () ? "" : (" device=" + device)));
 	return true;
 }

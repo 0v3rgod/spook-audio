@@ -35,9 +35,12 @@ O SPECTER NÃO linka nem executa o Carla (o rack ficou na Fase 2, só arquivos
 .carxp). Nada do app atual depende dele.
 
 === 5. alsa-scarlett-gui (0.5.1-2) ===
-Substituído pelo painel SCARLETT dentro do SPECTER. Só remover DEPOIS de validar
-o painel com a placa de verdade conectada (ainda não validado por falta do
-hardware — o painel abre e lê o cartão ALSA, mas sem Focusrite por perto).
+Substituído pelo painel SCARLETT dentro do SPECTER. VALIDADO em 18/10/2026
+com a Scarlett Solo 4th Gen conectada: a aba SCARLETT lê TODOS os controles
+do driver scarlett2 (Line In 1/2, Air, Phantom, Direct Monitor, PCM/mixes) e
+a ESCRITA foi validada no hardware (Line In 1 Level, via spook::AlsaMixer —
+a mesma classe da aba; o caminho snd_ctl_elem_write é idêntico). Pode
+remover quando quiser.
 
 === 6. Sobra final (com confirmação) ===
 Os apps antigos em python (~/spook-audio/bin/, spookaudio/, spook-audio.py,

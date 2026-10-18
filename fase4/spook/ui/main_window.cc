@@ -663,6 +663,8 @@ MainWindow::MainWindow ()
 
 	if (_eng_cards) { _eng_cards->set_text (std::to_string ((long) AlsaMixer::cards ().size ())); }
 
+	refresh_device_cards ();
+
 	_plugins_done.connect (sigc::mem_fun (*this, &MainWindow::on_plugins_scanned));
 
 	sync_daw ();
@@ -2378,6 +2380,17 @@ MainWindow::build_engine_tab ()
 	_device_entry = entry ("vazio = default do backend");
 	_device_entry->set_hexpand (true);
 	g->attach (*_device_entry, 1, r++, 1, 1);
+
+	/* Cartões ALSA: clicar copia o nome EXATO do cartão para o campo
+	 * Dispositivo (o backend ALSA casa por nome bonito — "Scarlett Solo 4th
+	 * Gen" — e não por "hw:2"; ver devicelist.cc do Ardour). */
+	g->attach (*strong ("Cartões ALSA"), 0, r, 1, 1);
+	_device_combo = combo ();
+	_device_combo->set_hexpand (true);
+	_device_combo->set_tooltip_text ("clique num cartão para copiar o nome para Dispositivo "
+	                                 "(o backend ALSA espera o nome, não hw:N)");
+	_device_combo->signal_changed ().connect (sigc::mem_fun (*this, &MainWindow::on_device_card_pick));
+	g->attach (*_device_combo, 1, r++, 1, 1);
 	c1->pack_start (*g, false, false, 0);
 
 	Gtk::Box* btns = box (Gtk::ORIENTATION_HORIZONTAL, 8);
@@ -2429,6 +2442,31 @@ MainWindow::on_backend_changed ()
 	set_status ("backend selecionado: " + _backend_combo->get_active_text ());
 }
 
+/* Cartões ALSA do sistema (mesma fonte do painel SCARLETT: snd_ctl). O nome
+ * bonito ("Scarlett Solo 4th Gen") é o que o enumerador do backend ALSA do
+ * Ardour usa como chave — "hw:N" NÃO funciona (ver devicelist.cc: o mapa é
+ * {nome_do_cartao => hw:CARD,N}). */
+void
+MainWindow::refresh_device_cards ()
+{
+	if (!_device_combo) { return; }
+	std::vector<AlsaMixer::Card> cs = AlsaMixer::cards ();
+	_device_combo->remove_all ();
+	for (size_t i = 0; i < cs.size (); ++i) {
+		_device_combo->append (cs[i].name);
+	}
+	_device_combo->set_active (-1); /* nenhum selecionado: não mexe no entry */
+}
+
+void
+MainWindow::on_device_card_pick ()
+{
+	const std::string t = _device_combo->get_active_text ();
+	if (!t.empty () && _device_entry && _device_entry->get_text () != t) {
+		_device_entry->set_text (t);
+	}
+}
+
 /* Ao trocar de aba, preenche o que ainda estiver vazio: o mixer, a lista de
  * cartões do mixer de hardware (leitura ALSA, instantânea) e o catálogo de
  * plugins (só cache). Assim a janela já mostra conteúdo sem obrigar a clicar. */
@@ -2450,6 +2488,9 @@ MainWindow::on_switch_page (Gtk::Widget* page, guint page_num)
 		break;
 	case 3:                                   /* AÇÕES */
 		if (_actions_filter_model) { _actions_filter_model->refilter (); }
+		break;
+	case 4:                                   /* ENGINE */
+		refresh_device_cards ();
 		break;
 	case 5:                                   /* SCARLETT */
 		if (_card_combo && _card_combo->get_active_row_number () < 0 && _ctls.empty ()) {

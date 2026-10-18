@@ -257,6 +257,9 @@ dump_tree (Gtk::Widget& w, int depth)
 		      + " ativa=" + std::to_string (n->get_current_page ());
 	} else if (Gtk::ComboBoxText* c = dynamic_cast<Gtk::ComboBoxText*> (&w)) {
 		extra = " ativo=\"" + c->get_active_text () + "\"";
+		if (Glib::RefPtr<Gtk::TreeModel> m = c->get_model ()) {
+			extra += " itens=" + std::to_string (m->children ().size ());
+		}
 	} else if (Gtk::ListBox* lb = dynamic_cast<Gtk::ListBox*> (&w)) {
 		extra = " filhos=" + std::to_string (lb->get_children ().size ());
 	} else if (Gtk::TextView* tv = dynamic_cast<Gtk::TextView*> (&w)) {

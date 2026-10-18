@@ -11,6 +11,8 @@
  *   --probe                        sonda cada .so de backend (por que entrou/saiu)
  *   --backends                     lista os backends disponiveis
  *   --backend NAME                 escolhe o motor   (default: "None (Dummy)")
+ *   --device NAME                  dispositivo do backend (ex: ALSA "hw:2";
+ *                                  vazio = default do backend)
  *   --session DIR NOME             abre (ou cria) uma sessao
  *   --track NOME                   cria uma trilha de audio na sessao
  *   --seconds N                    mantem o motor rodando N segundos
@@ -179,6 +181,7 @@ main (int argc, char* argv[])
 	}
 
 	string backend = opt (argc, argv, "--backend", "None (Dummy)");
+	string device  = opt (argc, argv, "--device");
 	string sdir    = opt (argc, argv, "--session");
 	string sname   = opt (argc, argv, "--session");
 	/* --session tem 2 argumentos: corrige pegando o proximo do proximo */
@@ -192,12 +195,30 @@ main (int argc, char* argv[])
 
 	SessionEvent::create_per_thread_pool ("spook", 512);
 
-	cout << "escolhendo motor: " << backend << endl;
+	cout << "escolhendo motor: " << backend
+	     << (device.empty () ? "" : (" (device=" + device + ")")) << endl;
 	AudioEngine* engine = AudioEngine::create ();
-	if (!engine->set_backend (backend, "spook-audio", "")) {
+	if (!engine->set_backend (backend, "spook-audio", device)) {
 		cerr << "nao consegui set_backend(\"" << backend << "\")" << endl;
 		ARDOUR::cleanup ();
 		return 2;
+	}
+	/* O device NAO chega pelos argumentos do set_backend: o instantiate do
+	 * backend ALSA ignora o 2o argumento (ver audioengine.cc, instantiate).
+	 * O caminho oficial e set_device_name(), depois do backend criado e ANTES
+	 * do start(). Sem isto o campo Dispositivo e um no-op.
+	 * Semantica do retorno: >0 = nome invalido (ALSA), <0 = backend nao usa
+	 * dispositivo (JACK devolve -1 com servidor no ar). */
+	if (!device.empty ()) {
+		int dr = engine->set_device_name (device);
+		if (dr > 0) {
+			cerr << "dispositivo \"" << device << "\" nao existe no backend " << backend << endl;
+			ARDOUR::cleanup ();
+			return 2;
+		}
+		if (dr < 0) {
+			cout << "(backend " << backend << " nao usa dispositivo — --device ignorado)" << endl;
+		}
 	}
 	if (engine->start () != 0) {
 		cerr << "o motor nao subiu" << endl;

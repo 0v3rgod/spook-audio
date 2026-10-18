@@ -132,6 +132,8 @@ class MainWindow : public Gtk::Window {
 	bool on_tick ();
 
 	void on_switch_page (Gtk::Widget* page, guint page_num);
+	void on_device_card_pick ();
+	void refresh_device_cards ();
 	void refresh_routes ();
 	void refresh_ctl_list ();
 	void drain_log ();
@@ -280,6 +282,10 @@ class MainWindow : public Gtk::Window {
 	/* ENGINE */
 	Gtk::ComboBoxText* _backend_combo = nullptr;
 	Gtk::Entry*        _device_entry  = nullptr;
+	Gtk::ComboBoxText* _device_combo  = nullptr; /* cartões ALSA -> copia o
+	                                                nome exato para o entry
+	                                                (o backend ALSA casa o
+	                                                nome bonito do cartão)   */
 	Gtk::Button*       _btn_start     = nullptr;
 	Gtk::Button*       _btn_stop2     = nullptr;
 	Gtk::Label*        _engine_state  = nullptr;
