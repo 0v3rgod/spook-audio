@@ -330,6 +330,17 @@ run_gui (int argc, char** argv)
 	if (std::getenv ("SPOOK_KEYTEST")) {
 		window.debug_key_test ();
 	}
+	/* Teste E2E de gravação (SPOOK_TEST_RECORD=<segundos>): grava pelo MESMO
+	 * caminho da GUI e depois sai sozinho para o harness medir o WAV. */
+	if (const char* rec = std::getenv ("SPOOK_TEST_RECORD")) {
+		const double seg = std::atof (rec);
+		window.debug_record_test (seg);
+		Glib::signal_timeout ().connect ([app, seg] () {
+			std::fprintf (stderr, "[REC-TEST] fim — saindo\n");
+			app->quit ();
+			return false;
+		}, (guint) ((seg + 6.0) * 1000.0));
+	}
 
 	if (std::getenv ("SPOOK_DUMP_TREE")) {
 		std::cout.setf (std::ios::unitbuf);

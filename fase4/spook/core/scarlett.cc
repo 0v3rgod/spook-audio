@@ -228,6 +228,39 @@ AlsaMixer::read_one (std::string const& name, CtlElem& out, std::string& err)
 }
 
 bool
+AlsaMixer::read_meters (std::vector<long>& out, std::string& err)
+{
+	out.clear ();
+	if (!_ctl) { err = "mixer fechado"; return false; }
+	snd_ctl_t* ctl = (snd_ctl_t*) _ctl;
+
+	/* "Level Meter" mora na interface PCM (no Solo 4th Gen: numid 46). */
+	snd_ctl_elem_id_t* id = 0;
+	snd_ctl_elem_id_alloca (&id);
+	snd_ctl_elem_id_set_interface (id, SND_CTL_ELEM_IFACE_PCM);
+	snd_ctl_elem_id_set_name (id, "Level Meter");
+
+	snd_ctl_elem_info_t* info = 0;
+	snd_ctl_elem_info_alloca (&info);
+	snd_ctl_elem_info_set_id (info, id);
+	if (snd_ctl_elem_info (ctl, info) < 0) {
+		err = "sem controle 'Level Meter' neste cartão";
+		return false;
+	}
+
+	snd_ctl_elem_value_t* val = 0;
+	snd_ctl_elem_value_alloca (&val);
+	snd_ctl_elem_value_set_id (val, id);
+	if (snd_ctl_elem_read (ctl, val) < 0) { err = "leitura do 'Level Meter' falhou"; return false; }
+
+	unsigned int n = snd_ctl_elem_info_get_count (info);
+	for (unsigned int i = 0; i < n; ++i) {
+		out.push_back (snd_ctl_elem_value_get_integer (val, i));
+	}
+	return true;
+}
+
+bool
 AlsaMixer::set_integer (std::string const& name, long value, std::string& err)
 {
 	if (!_ctl) { err = "mixer fechado"; return false; }

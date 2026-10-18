@@ -60,6 +60,11 @@ class AlsaMixer {
 	/* Le um controle pelo nome exato. */
 	bool read_one (std::string const& name, CtlElem& out, std::string& err);
 
+	/* NIVEIS (VU): le o controle "Level Meter" (iface=PCM) — no Solo 4th
+	 * Gen sao 12 valores ao vivo 0..4095 (indice = destino do roteamento;
+	 * [0]=Saida Analogica 1 e [1]=Saida 2 sao os unicos confirmados). */
+	bool read_meters (std::vector<long>& out, std::string& err);
+
 	bool set_integer (std::string const& name, long value, std::string& err);
 	bool set_enum (std::string const& name, std::string const& label, std::string& err);
 

@@ -17,8 +17,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cctype>
 #include <cmath>
 #include <ctime>
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 
@@ -155,6 +157,14 @@ scale:disabled slider { background-color: #59617a; }
 levelbar trough { background-color: #0a0d14; border: 1px solid #232a3a; border-radius: 3px; padding: 1px; }
 levelbar block.filled { background-color: #34e1e1; border: none; border-radius: 2px; min-height: 8px; }
 levelbar.discrete block.filled { background-color: #34e1e1; }
+
+/* NÍVEIS do mixer do hardware (Level Meter do Scarlett) */
+.spook-meter-tit { color: #7f8798; font-size: 9px; font-weight: 700; letter-spacing: 1px; }
+.spook-meter-tit.forte { color: #34e1e1; }
+levelbar.spook-vu trough { min-height: 10px; min-width: 74px; background-color: #0a0d14; }
+levelbar.spook-vu block.filled { background-color: #25e08a; }
+levelbar.spook-vu block.filled.high { background-color: #ffb020; }
+levelbar.spook-vu block.filled.full { background-color: #ff5566; }
 
 button.spook-btn {
   background-image: none; background-color: #1a2030; color: #d7dce6;
@@ -691,6 +701,7 @@ MainWindow::~MainWindow ()
 	 * switch-page e o handler leria _engine/_daw já destruídos. */
 	_sig_page.disconnect ();
 	_tick.disconnect ();
+	_meter_tick.disconnect ();
 	if (_piano_window) { delete _piano_window; _piano_window = nullptr; }
 	if (_scan_thread.joinable ()) { _scan_thread.join (); }
 }
@@ -2801,6 +2812,131 @@ MainWindow::refresh_routes ()
 	_routes->show_all ();
 }
 
+/* ------------------------------------------------- Scarlett: nomes e ordem
+ *
+ * Os controles do driver scarlett2 têm nomes crus de ALSA (ex.: "Mix A Input
+ * 01 Playback Volume", "Line In 2 Air Capture Enum"). Aqui eles viram rótulos
+ * legíveis e ganham ORDEM de utilidade — entrada e monitoração na frente, que
+ * é o que o usuário procura primeiro. O nome cru fica no tooltip, e o filtro
+ * casa com os dois.
+ */
+namespace {
+
+struct Rotulo { const char* cru; const char* bom; const char* ajuda; };
+
+const Rotulo kScarlettDicas[] = {
+	{ "Direct Monitor Playback Switch", "MONITOR DIRETO",
+	  "Ouve a entrada direto na saída, sem passar pelo PC (latência zero)." },
+	{ "Line In 1 Level Capture Enum", "ENTRADA 1 · Inst/Line",
+	  "Nível da entrada 1 (jack 1/4\"): Line para linha; Inst para instrumento (guitarra/baixo)." },
+	{ "Line In 2 Air Capture Enum", "ENTRADA 2 · AIR",
+	  "AIR do pré da entrada 2 (mic XLR): Presence ou Presence+Drive — dá brilho ao vocal." },
+	{ "Line In 2 Phantom Power Capture Switch", "ENTRADA 2 · 48V PHANTOM",
+	  "Alimentação 48V para microfone condensador (entrada 2/XLR)." },
+	{ "PCM Input Capture Switch", "MIXER · som do PC (PCM)",
+	  "Deixa o som que vem do PC entrar no mixer interno (monitoração)." },
+	{ "Sync Status", "SINCRONIA (relógio)",
+	  "Clock da placa — 'Locked' = travado no relógio do PC." },
+};
+
+std::string
+scarlett_pretty (std::string const& cru)
+{
+	for (const Rotulo& r : kScarlettDicas) {
+		if (cru == r.cru) { return r.bom; }
+	}
+	/* "Analogue Output 01 Playback Enum" -> "SAÍDA ANALÓGICA 1 · fonte" */
+	if (cru.compare (0, 16, "Analogue Output ") == 0) {
+		return "SAÍDA ANALÓGICA " + std::to_string (std::atoi (cru.c_str () + 16)) + " · fonte";
+	}
+	/* "PCM 02 Capture Enum" -> "USB → PC · PCM 2 · fonte" */
+	if (cru.compare (0, 4, "PCM ") == 0 && cru.find ("Capture Enum") != std::string::npos) {
+		return "USB → PC · PCM " + std::to_string (std::atoi (cru.c_str () + 4)) + " · fonte";
+	}
+	/* "DSP Input 2 Capture Enum" -> "DSP 2 · entrada" */
+	if (cru.compare (0, 10, "DSP Input ") == 0) {
+		return "DSP " + std::to_string (std::atoi (cru.c_str () + 10)) + " · entrada";
+	}
+	/* "Mixer Input 03 Capture Enum" -> "MIX IN 3 · sinal" */
+	if (cru.compare (0, 12, "Mixer Input ") == 0) {
+		return "MIX IN " + std::to_string (std::atoi (cru.c_str () + 12)) + " · sinal";
+	}
+	return cru;
+}
+
+std::string
+scarlett_ajuda (std::string const& cru)
+{
+	for (const Rotulo& r : kScarlettDicas) {
+		if (cru == r.cru) { return r.ajuda; }
+	}
+	if (cru.compare (0, 4, "PCM ") == 0 && cru.find ("Capture Enum") != std::string::npos) {
+		return "O que o USB manda pro computador neste canal — é o que a gravação recebe.";
+	}
+	if (cru.compare (0, 16, "Analogue Output ") == 0) {
+		return "O que sai na saída física do aparelho (fones/monitores).";
+	}
+	if (cru.compare (0, 10, "DSP Input ") == 0) {
+		return "Sinal que entra no processador da placa (padrão: a Analogue equivalente).";
+	}
+	if (cru.compare (0, 12, "Mixer Input ") == 0) {
+		return "Sinal que entra no mixer interno e pode ir para os mixes A–F.";
+	}
+	return "";
+}
+
+/* ordem dos comutadores: 0 = entrada/monitor, 2 = roteamento, 3 = outros, 4 = status */
+int
+scarlett_rank (std::string const& cru)
+{
+	if (cru == "Direct Monitor Playback Switch") { return 0; }
+	if (cru.compare (0, 8, "Line In ") == 0) { return 0; }
+	if (cru.compare (0, 16, "Analogue Output ") == 0) { return 2; }
+	if (cru.compare (0, 4, "PCM ") == 0 && cru.find ("Capture Enum") != std::string::npos) { return 2; }
+	if (cru.compare (0, 10, "DSP Input ") == 0) { return 2; }
+	if (cru.compare (0, 12, "Mixer Input ") == 0) { return 2; }
+	if (cru == "PCM Input Capture Switch") { return 2; }
+	if (cru == "Sync Status") { return 4; }
+	return 3;
+}
+
+/* ordem dos faders: 0 = mixes A–F, 1 = monitor direto, 2 = resto */
+int
+scarlett_fader_rank (std::string const& cru)
+{
+	if (cru.compare (0, 10, "Monitor Mix ") == 0) { return 1; }
+	if (cru.compare (0, 4, "Mix ") == 0) { return 0; }
+	return 2;
+}
+
+/* "Mix A Input 01 Playback Volume" -> "Mix A · 1" */
+std::string
+scarlett_strip (std::string const& cru)
+{
+	std::string s = cru;
+	const std::string sufixo1 = " Playback Volume";
+	const std::string sufixo2 = " Capture Volume";
+	if (s.size () > sufixo1.size () && s.compare (s.size () - sufixo1.size (), sufixo1.size (), sufixo1) == 0) {
+		s.erase (s.size () - sufixo1.size ());
+	} else if (s.size () > sufixo2.size () && s.compare (s.size () - sufixo2.size (), sufixo2.size (), sufixo2) == 0) {
+		s.erase (s.size () - sufixo2.size ());
+	}
+	if (s.compare (0, 12, "Monitor Mix ") == 0) { s.replace (0, 12, "Mon "); }
+	size_t p;
+	if ((p = s.find (" Input ")) != std::string::npos) { s.replace (p, 7, " · "); }
+	if ((p = s.find (" · 0")) != std::string::npos) { s.erase (p + 4, 1); }   /* · => 2 bytes UTF-8: o 0 está em p+4 */
+	return s;
+}
+
+std::string
+minusculas (std::string s)
+{
+	for (char& c : s) { c = (char) std::tolower ((unsigned char) c); }
+	return s;
+}
+
+} // namespace
+
 /* --------------------------------------------------------------- SCARLETT */
 
 Gtk::Widget*
@@ -2808,8 +2944,10 @@ MainWindow::build_scarlett_tab ()
 {
 	Gtk::Box* b = box (Gtk::ORIENTATION_VERTICAL, 10, 12);
 	b->pack_start (*strong ("Mixer do hardware (ALSA snd_ctl)"), false, false, 0);
-	b->pack_start (*dim ("Lê o mixer do cartão pela interface de CONTROLE — não abre PCM, não toca som. "
-	                     "Os faders ficam bloqueados (READ-ONLY) até você liberar a ESCRITA."), false, false, 0);
+	b->pack_start (*dim ("Os botões clássicos da placa (Inst/Line, AIR, 48V, Monitor Direto) ficam no "
+	                     "primeiro cartão; níveis ao vivo no segundo; faders no fim. Lê o mixer pela "
+	                     "interface de CONTROLE — não abre PCM, não toca som. Tudo fica bloqueado "
+	                     "(READ-ONLY) até você liberar a ESCRITA."), false, false, 0);
 
 	_card_combo = combo ();
 	_card_combo->set_hexpand (true);
@@ -2840,12 +2978,53 @@ MainWindow::build_scarlett_tab ()
 	top->pack_start (*_write_sw, false, false, 0);
 	b->pack_start (*top, false, false, 0);
 
-	_ctl_filter = entry ("filtrar controles (ex.: Mix A Input, Headphone…)");
+	_ctl_filter = entry ("filtrar controles (ex.: AIR, 48V, PCM, Mix)…");
 	_ctl_filter->signal_changed ().connect (sigc::mem_fun (*this, &MainWindow::refresh_ctl_list));
 	b->pack_start (*_ctl_filter, false, false, 0);
 
+	/* BOTÕES DA PLACA — o que o usuário procura primeiro (veio da versão
+	 * antiga do app ALSA Scarlett): entrada, monitoração e roteamento, com
+	 * rótulos PT-BR. */
+	Gtk::Box* cs = card ("BOTÕES DA PLACA");
+	_switch_box = box (Gtk::ORIENTATION_VERTICAL, 2);
+	cs->pack_start (*scrolled (*_switch_box), true, true, 0);
+	b->pack_start (*cs, true, true, 0);
+
+	/* NÍVEIS — o "Level Meter" do próprio hardware (volátil): 12 medidores
+	 * ao vivo. [0] e [1] = saídas analógicas 1/2 (confirmado na bancada);
+	 * os outros são internos do roteamento — ficam numerados. */
+	Gtk::Box* cm = card ("NÍVEIS (ao vivo)", 6);
+	Gtk::Grid* mg = Gtk::manage (new Gtk::Grid);
+	mg->set_row_spacing (7);
+	mg->set_column_spacing (16);
+	static const char* const nomes_vu[12] = {
+	    "SAÍDA 1", "SAÍDA 2", "VU 3",  "VU 4",  "VU 5",  "VU 6",
+	    "VU 7",    "VU 8",    "VU 9",  "VU 10", "VU 11", "VU 12"
+	};
+	for (int i = 0; i < 12; ++i) {
+		Gtk::Box* cell = box (Gtk::ORIENTATION_VERTICAL, 2);
+		Gtk::Label* nm = label (nomes_vu[i], i < 2 ? "spook-meter-tit forte" : "spook-meter-tit");
+		nm->set_xalign (0.0f);
+		Gtk::LevelBar* bar = Gtk::manage (new Gtk::LevelBar);
+		bar->set_min_value (0.0);
+		bar->set_max_value (1.0);
+		bar->set_value (0.0);
+		bar->set_hexpand (true);
+		cls (*bar, "spook-vu");
+		bar->set_tooltip_text (std::string ("Medidor ") + std::to_string (i + 1) + "/12 do 'Level Meter' da placa. "
+		    + (i == 0 ? "Saída analógica 1." : i == 1 ? "Saída analógica 2." : "Interno do roteamento."));
+		cell->pack_start (*nm, false, false, 0);
+		cell->pack_start (*bar, false, false, 0);
+		mg->attach (*cell, i % 6, i / 6, 1, 1);
+		_meter_bars.push_back (bar);
+	}
+	cm->pack_start (*mg, false, false, 0);
+	_meter_state = dim ("abra um cartão (PROCURAR CARTÕES) para ver os níveis.");
+	cm->pack_start (*_meter_state, false, false, 0);
+	b->pack_start (*cm, false, false, 0);
+
 	/* faixa de canais (faders verticais) */
-	Gtk::Box* ct = card ("FAIXA DE CANAIS", 6);
+	Gtk::Box* ct = card ("FAIXA DE CANAIS (mixer)", 6);
 	_strip_box = box (Gtk::ORIENTATION_HORIZONTAL, 6);
 	Gtk::ScrolledWindow* ss = Gtk::manage (new Gtk::ScrolledWindow);
 	ss->add (*_strip_box);
@@ -2855,14 +3034,15 @@ MainWindow::build_scarlett_tab ()
 	ct->pack_start (*ss, true, true, 0);
 	b->pack_start (*ct, false, false, 0);
 
-	/* comutadores (enum/bool) */
-	Gtk::Box* cs = card ("COMUTADORES");
-	_switch_box = box (Gtk::ORIENTATION_VERTICAL, 2);
-	cs->pack_start (*scrolled (*_switch_box), true, true, 0);
-	b->pack_start (*cs, true, true, 0);
-
 	_scarlett_state = dim ("");
 	b->pack_start (*_scarlett_state, false, false, 0);
+
+	/* O Level Meter é volátil e merece cadência maior que o tick de 500 ms;
+	 * o update checa sozinho se o mixer está aberto e a aba visível. */
+	if (!_meter_tick.connected ()) {
+		_meter_tick = Glib::signal_timeout ().connect (
+		    sigc::mem_fun (*this, &MainWindow::update_meters), 150);
+	}
 	return b;
 }
 
@@ -2939,9 +3119,35 @@ MainWindow::refresh_ctl_list ()
 	clear (*_switch_box);
 	int strips = 0, switches = 0;
 
+	/* Ordem de exibição: comutadores primeiro (entrada/monitor → roteamento
+	 * → outros → status), depois os faders (mixes A–F → monitor → resto).
+	 * O filtro casa com o nome cru OU com o rótulo amigável. */
+	std::vector<size_t> ordem;
 	for (size_t i = 0; i < _ctls.size (); ++i) {
 		const CtlElem& e = _ctls[i];
-		if (!f.empty () && e.name.find (f) == std::string::npos) { continue; }
+		if (!f.empty ()) {
+			const std::string q = minusculas (f);
+			bool casa = minusculas (e.name).find (q) != std::string::npos
+			         || minusculas (scarlett_pretty (e.name)).find (q) != std::string::npos;
+			if (!casa) { continue; }
+		}
+		const bool fader = (e.kind == "INTEGER" && e.has_range);
+		if (!fader && e.kind != "ENUM" && e.kind != "BOOL") { continue; }
+		ordem.push_back (i);
+	}
+	std::stable_sort (ordem.begin (), ordem.end (), [this] (size_t a, size_t b) {
+		const CtlElem& x = _ctls[a];
+		const CtlElem& y = _ctls[b];
+		const bool fx = (x.kind == "INTEGER" && x.has_range);
+		const bool fy = (y.kind == "INTEGER" && y.has_range);
+		if (fx != fy) { return !fx; }   /* comutadores antes dos faders */
+		return fx ? scarlett_fader_rank (x.name) < scarlett_fader_rank (y.name)
+		          : scarlett_rank (x.name) < scarlett_rank (y.name);
+	});
+
+	int cabecalho = -1;   /* último cabeçalho de grupo já emitido */
+	for (size_t k = 0; k < ordem.size (); ++k) {
+		const CtlElem& e = _ctls[ordem[k]];
 
 		if (e.kind == "INTEGER" && e.has_range) {
 			/* fader vertical */
@@ -2950,7 +3156,8 @@ MainWindow::refresh_ctl_list ()
 			cls (*strip, e.writable ? "arm" : "ro");
 			strip->set_size_request (86, -1);
 
-			Gtk::Label* nm = label (e.name, "spook-strip-name");
+			Gtk::Label* nm = label (scarlett_strip (e.name), "spook-strip-name");
+			nm->set_tooltip_text (e.name);
 			nm->set_line_wrap (true);
 			nm->set_max_width_chars (12);
 			nm->set_lines (2);
@@ -2992,10 +3199,21 @@ MainWindow::refresh_ctl_list ()
 			_strip_box->pack_start (*strip, false, false, 0);
 			++strips;
 		} else if (e.kind == "ENUM" || e.kind == "BOOL") {
+			const int rk = scarlett_rank (e.name);
+			if (rk != cabecalho) {
+				cabecalho = rk;
+				Gtk::Label* ch = label (rk == 0 ? "ENTRADAS & MONITOR"
+				                   : rk == 2 ? "ROTEAMENTO (de onde vem → pra onde vai)"
+				                   : rk == 4 ? "STATUS" : "OUTROS CONTROLES", "spook-ruler");
+				ch->set_xalign (0.0f);
+				_switch_box->pack_start (*ch, false, false, 0);
+			}
 			Gtk::Box* row = box (Gtk::ORIENTATION_HORIZONTAL, 10);
 			cls (*row, "spook-row");
-			Gtk::Label* nm = label (e.name, "spook-strong");
+			Gtk::Label* nm = label (scarlett_pretty (e.name), "spook-strong");
 			nm->set_ellipsize (Pango::ELLIPSIZE_END);
+			std::string dica = scarlett_ajuda (e.name);
+			nm->set_tooltip_text (dica.empty () ? e.name : e.name + "\n" + dica);
 			row->pack_start (*nm, true, true, 0);
 			Gtk::Label* ty = label (e.kind, "spook-badge");
 			row->pack_start (*ty, false, false, 0);
@@ -3031,6 +3249,34 @@ MainWindow::refresh_ctl_list ()
 	}
 	_strip_box->show_all ();
 	_switch_box->show_all ();
+}
+
+/* Medidores ao vivo ("Level Meter" do hardware): 12 valores 0..4095.
+ * Só lê com o mixer aberto e a aba SCARLETT à vista (nada de trabalho oculto). */
+bool
+MainWindow::update_meters ()
+{
+	if (_meter_bars.empty () || !_mixer || !_mixer->is_open ()) { return true; }
+	if (_nb && _nb->get_current_page () != 5) { return true; }
+
+	std::vector<long> v;
+	std::string err;
+	if (!_mixer->read_meters (v, err)) {
+		if (_meter_state) { _meter_state->set_text (err); }
+		return true;
+	}
+
+	for (size_t i = 0; i < _meter_bars.size () && i < v.size (); ++i) {
+		long x = v[i];
+		if (x < 0) { x = 0; }
+		if (x > 4095) { x = 4095; }
+		_meter_bars[i]->set_value ((double) x / 4095.0);
+	}
+	if (_meter_state) {
+		_meter_state->set_text (std::to_string ((long) v.size ())
+		    + " medidores lidos do hardware ('Level Meter').");
+	}
+	return true;
 }
 
 /* ----------------------------------------------------------------- PLUGINS */
@@ -3276,6 +3522,80 @@ MainWindow::debug_bootstrap_session ()
 	refresh_mixer ();
 	refresh_arrange ();
 	refresh_markers ();
+}
+
+/* Teste E2E de GRAVAÇÃO headless (SPOOK_TEST_RECORD=<segundos>): percorre o
+ * MESMO caminho da GUI — motor no ar, sessão aberta, trilha criada (com
+ * auto-conexão de entrada), ARM, REC e ROLAR; um timer para e salva no fim.
+ * Os WAVs caem em <sessão>/interchange/<sessão>/audiofiles/. Só diagnóstico.
+ * Backend/dispositivo podem vir por SPOOK_ENGINE_BACKEND / SPOOK_ENGINE_DEVICE
+ * (o mesmo que a aba ENGINE mostra). */
+void
+MainWindow::debug_record_test (double segundos)
+{
+	if (!_sess_dir || !_sess_name || !_backend_combo || !_device_entry) { return; }
+	_sess_dir->set_text ("/tmp/opencode/spook-rec-test");
+	_sess_name->set_text ("rectest");
+
+	if (const char* be = std::getenv ("SPOOK_ENGINE_BACKEND")) {
+		const std::string alvo = minusculas (be);
+		Glib::RefPtr<Gtk::TreeModel> m = _backend_combo->get_model ();
+		int idx = 0, achou = -1;
+		if (m) {
+			Gtk::TreeModel::Children kids = m->children ();
+			for (Gtk::TreeModel::iterator it = kids.begin (); it != kids.end (); ++it, ++idx) {
+				Glib::ustring txt;
+				it->get_value (0, txt);
+				if (minusculas (txt.raw ()).find (alvo) != std::string::npos) { achou = idx; break; }
+			}
+		}
+		if (achou >= 0) { _backend_combo->set_active (achou); }
+		else { std::fprintf (stderr, "[REC-TEST] backend '%s' nao encontrado\n", be); }
+	}
+	if (const char* dv = std::getenv ("SPOOK_ENGINE_DEVICE")) {
+		_device_entry->set_text (dv);
+	}
+
+	std::fprintf (stderr, "[REC-TEST] backend=\"%s\" dispositivo=\"%s\" %.1f s\n",
+	              _backend_combo->get_active_text ().c_str (),
+	              _device_entry->get_text ().c_str (), segundos);
+
+	if (!_engine->engine_running ()) { on_start (); }
+	if (!_engine->engine_running ()) {
+		std::fprintf (stderr, "[REC-TEST] motor NAO subiu (ver status na janela)\n");
+		return;
+	}
+	on_session_open ();
+	if (!_engine->session_open ()) {
+		std::fprintf (stderr, "[REC-TEST] sessao NAO abriu\n");
+		return;
+	}
+	if (_track_name) { _track_name->set_text ("Gravacao"); }
+	on_track_new ();
+	if (!_daw->attached ()) {
+		std::fprintf (stderr, "[REC-TEST] DAW nao anexou\n");
+		return;
+	}
+
+	_daw->arm_all (true);
+	_daw->set_record_enabled (true);
+	_daw->toggle_roll ();
+	std::fprintf (stderr, "[REC-TEST] gravando...\n");
+	refresh_transport ();
+	refresh_mixer ();
+
+	Glib::signal_timeout ().connect ([this] () {
+		_daw->stop ();
+		_daw->set_record_enabled (false);
+		_daw->arm_all (false);
+		std::string err;
+		if (_daw->save (err)) { std::fprintf (stderr, "[REC-TEST] parado e salvo\n"); }
+		else { std::fprintf (stderr, "[REC-TEST] parado; save falhou: %s\n", err.c_str ()); }
+		std::fprintf (stderr, "[REC-TEST] sessao em /tmp/opencode/spook-rec-test/rectest\n");
+		refresh_transport ();
+		refresh_mixer ();
+		return false;
+	}, (guint) (segundos * 1000.0));
 }
 
 /* Teste funcional dos atalhos: monta GdkEventKey sintéticos e chama o MESMO

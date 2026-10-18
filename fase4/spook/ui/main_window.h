@@ -61,6 +61,7 @@ class MainWindow : public Gtk::Window {
 	void show_tab (int n);
 	void debug_bootstrap_session ();
 	void debug_key_test ();
+	void debug_record_test (double segundos);
 
   private:
 	/* --- montagem --- */
@@ -136,6 +137,7 @@ class MainWindow : public Gtk::Window {
 	void refresh_device_cards ();
 	void refresh_routes ();
 	void refresh_ctl_list ();
+	bool update_meters ();
 	void drain_log ();
 	void set_status (std::string const& s, bool error = false);
 	std::string default_session_dir () const;
@@ -274,6 +276,9 @@ class MainWindow : public Gtk::Window {
 	Gtk::Box*               _strip_box  = nullptr;   /* faders verticais */
 	Gtk::Box*               _switch_box = nullptr;   /* enums/bools      */
 	Gtk::Label*             _scarlett_state = nullptr;
+	Gtk::Label*             _meter_state = nullptr;  /* resumo dos NÍVEIS */
+	std::vector<Gtk::LevelBar*> _meter_bars;         /* NÍVEIS (Level Meter) */
+	sigc::connection        _meter_tick;
 	std::unique_ptr<AlsaMixer> _mixer;
 	std::vector<CtlElem>    _ctls;
 	bool                    _writing = false;         /* guarda contra escrever

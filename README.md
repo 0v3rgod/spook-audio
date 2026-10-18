@@ -227,6 +227,17 @@ env -u WAYLAND_DISPLAY DISPLAY=:99 GDK_BACKEND=x11 SPOOK_NON_UNIQUE=1 \
 - `SPOOK_KEYTEST=1` exercita os **atalhos** com `GdkEventKey` sintéticos e loga
   o estado resultante (`rolling/arm/loop/locais`). Resultado: 15/15 corretos,
   inclusive "com o foco num Entry o atalho é ignorado".
+- `SPOOK_TEST_RECORD=<segundos>` percorre o caminho REAL de gravação da GUI
+  (motor no ar → sessão `/tmp/opencode/spook-rec-test` → trilha com
+  auto-conexão de entrada → ARM → REC → ROLAR → parar → salvar) e sai sozinho
+  `+6s` depois. Os takes caem em
+  `/tmp/opencode/spook-rec-test/interchange/spook-rec-test/audiofiles/*.wav`
+  (float32; `ffmpeg -i x.wav -acodec pcm_s16le x16.wav` para medir). Backend e
+  dispositivo podem vir por `SPOOK_ENGINE_BACKEND` (`ALSA`, `JACK`, `PulseAudio`)
+  e `SPOOK_ENGINE_DEVICE` (nome do cartão, ex.: `Scarlett Solo 4th Gen`).
+  Medido em 18/10/2026 (JACK/Pipewire): take com o mic interno como fonte =
+  dither nos 1ºs segundos e **ruído rosa pk ~20000 / RMS ~4600** depois do
+  `pw-link` do mic para `spook-audio:Gravacao/audio_in 1/2` — gravação E2E OK.
 - Medido: as 8 abas com `RC=0` (e `[FATAL]` = 0) e `--self-test: TUDO OK`.
   O self-test também cria uma trilha e a renomeia via `Daw::rename_route()`;
   confirmação real: `Trilha de Teste -> Trilha Renomeada`.
