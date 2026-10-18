@@ -1,0 +1,7 @@
+Vendored Ardour runtime for SPECTER
+pacote: ardour 9.8-1
+copiado: 2026-10-17T22:15:37-03:00
+lib/ = /usr/lib/ardour9 completo (bundle; inclui glibc-hwcaps, LV2, backends, engines, panners, surfaces, utils, vamp, fst, ladspa)
+share/ = /usr/share/ardour9 exceto media/ e web_surfaces/ (clip browser e surfaces web do gtk2_ardour)
+etc/ = /etc/ardour9 (system_config, keys/menus, clearlooks)
+refresh: tools/vendor-ardour.sh

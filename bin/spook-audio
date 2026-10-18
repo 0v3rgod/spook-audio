@@ -1,0 +1,3 @@
+#!/bin/sh
+# SPOOK AUDIO — lançador
+exec /usr/bin/python3 "$HOME/spook-audio/spook-audio.py" "$@"

@@ -1,0 +1,40 @@
+Pacotes instalados para a RE / FASE 4 do SPECTER (binário único) e o que fazer
+com cada um. Ordem pensada para desinstalar sem quebrar NADA.
+
+=== 1. JÁ PODE REMOVER: ardour (9.8-1) ===
+O SPECTER roda 100% com o runtime EMBUTIDO em fase4/vendor/ardour/
+(lib = /usr/lib/ardour9, share = /usr/share/ardour9 sem media/, etc = /etc/ardour9).
+Provado em 17/10/2026 com os três diretórios do sistema ESCONDIDOS
+(unshare -rm + tmpfs em /usr/lib/ardour9, /usr/share/ardour9, /etc/ardour9):
+  - ./spook-audio --self-test  -> self-test: TUDO OK (binário direto e via app.sh)
+  - UI headless completa (abas 0/1/6: mixer, arranger com seções, catálogo de
+    plugins) -> rc=0 nas 3.
+Ele TAMBÉM não é mais preciso para COMPILAR: headers em fase4/src/ardour e .so
+no vendor. Comando (você digita a senha; confira a lista que o pacman mostra):
+    sudo pacman -Rns ardour
+
+=== 2. MANTER (por enquanto): boost (1.92.0-1) ===
+Necessário apenas para COMPILAR (os headers do libardour incluem
+boost/rational.hpp no layout de Temporal::Beats, boost/bind/protect.hpp em
+pbd/signals.h, etc.). Não é dependência de runtime. Se um dia vendorizarmos o
+subconjunto de headers usado, este também sai.
+
+=== 3. MANTER ENQUANTO TESTAR UI: xorg-server-xvfb (21.1.25-1) ===
+Servidor X headless usado APENAS para testar a janela (regra do AGENTS.md:
+nunca abrir janela na sessão Wayland do Taylor — Xvfb é um X separado).
+Sai quando não houver mais teste headless a fazer.
+
+=== 4. carla-git (opcional, pode sair quando quiser) ===
+O SPECTER NÃO linka nem executa o Carla (o rack ficou na Fase 2, só arquivos
+.carxp). Nada do app atual depende dele.
+
+=== 5. alsa-scarlett-gui (0.5.1-2) ===
+Substituído pelo painel SCARLETT dentro do SPECTER. Só remover DEPOIS de validar
+o painel com a placa de verdade conectada (ainda não validado por falta do
+hardware — o painel abre e lê o cartão ALSA, mas sem Focusrite por perto).
+
+=== 6. Sobra final (com confirmação) ===
+Os apps antigos em python (~/spook-audio/bin/, spookaudio/, spook-audio.py,
+~/spook-audio/spook-audio.desktop) ficam para o encerramento do projeto.
+
+(boost-libs já estava instalado antes — não remover.)

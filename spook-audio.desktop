@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=SPOOK AUDIO
+GenericName=Painel de áudio
+Comment=Painel unificado: PipeWire + Ardour + Carla + Focusrite Scarlett
+Exec=/home/taylor/spook-audio/bin/spook-audio
+Icon=audio-card
+Terminal=false
+Categories=AudioVideo;Audio;Mixer;
+Keywords=audio;pipewire;ardour;carla;scarlett;jack;alsa;
+StartupNotify=true

@@ -1,0 +1,124 @@
+/*
+ * SPOOK AUDIO — janela principal (gtkmm-3.0)
+ *
+ * Abas: ENGINE · SESSÃO · SCARLETT · PLUGINS · LOG
+ *
+ * POR QUE GTK3 E NAO GTK4 (medido, nao chute)
+ *   O libardour instalado foi construido contra glibmm-2.4 + sigc++-2.0.
+ *   O gtkmm-4.0 usa glibmm-2.68 + sigc++-3.0. Misturar os dois no mesmo
+ *   processo nao funciona:
+ *     - os headers do Ardour nem COMPILAM com sigc++3 (pbd/crossthread.h:97 usa
+ *       `sigc::slot<bool,Glib::IOCondition>`, sintaxe removida no sigc++3);
+ *     - mesmo se compilasse, libsigc-2.0 e libsigc-3.0 exportam 79 nomes
+ *       mangled iguais, e libglibmm-2.4/libglibmm-2.68 mais 1483 — o linker
+ *       dinamico interpoe um sobre o outro (layouts diferentes) e quebra.
+ *   gtkmm-3.0 usa glibmm-2.4/sigc++-2.0, a MESMA familia do libardour: um unico
+ *   libsigc/libglibmm carregado, zero interposicao. Alem disso o proprio GUI do
+ *   Ardour 9 e GTK3 (o pacote traz um GTK3 forkado como libytk/libydk, que so
+ *   carrega quando se usa libgtkmm2ext/libcanvas — nos nao carregamos).
+ *   Prova: /tmp/opencode/mixtest/mix-GTK3 (init -> Dummy -> sessao -> trilha ->
+ *   get_routes -> teardown, RC=0) ao lado do mix-GTK4 que nem compila.
+ *
+ * Regra de convivência (AGENTS.md): NUNCA abrir janela de teste na sessão Wayland
+ * do Taylor. Os testes usam Broadway (gtk4-broadwayd) ou Xvfb.
+ */
+#pragma once
+
+#include <memory>
+#include <thread>
+
+#include <glibmm/dispatcher.h>
+#include <gtkmm.h>
+
+#include "core/engine.h"
+#include "core/scarlett.h"
+
+namespace spook {
+
+class MainWindow : public Gtk::Window {
+  public:
+	MainWindow ();
+	~MainWindow () override;
+
+  private:
+	/* --- montagem --- */
+	Gtk::Widget* build_engine_tab ();
+	Gtk::Widget* build_session_tab ();
+	Gtk::Widget* build_scarlett_tab ();
+	Gtk::Widget* build_plugins_tab ();
+	Gtk::Widget* build_log_tab ();
+
+	/* --- ações --- */
+	void on_backend_changed ();
+	void on_start ();
+	void on_stop ();
+	void on_session_open ();
+	void on_session_close ();
+	void on_track_new ();
+	void on_scarlett_scan ();
+	void on_scarlett_card_changed ();
+	void on_plugins_cache ();
+	void on_plugins_full ();
+	void on_plugins_scanned ();
+
+	/* --- loop --- */
+	bool on_tick ();
+
+	void refresh_routes ();
+	void refresh_ctl_list ();
+	void drain_log ();
+	void set_status (std::string const& s, bool error = false);
+	std::string default_session_dir () const;
+
+	std::unique_ptr<Engine> _engine;
+
+	/* ENGINE */
+	Gtk::ComboBoxText* _backend_combo = nullptr;
+	Gtk::Entry*        _device_entry  = nullptr;
+	Gtk::Button*       _btn_start     = nullptr;
+	Gtk::Button*       _btn_stop      = nullptr;
+	Gtk::Label*        _engine_state  = nullptr;
+
+	/* SESSÃO */
+	Gtk::Entry*    _sess_dir  = nullptr;
+	Gtk::Entry*    _sess_name = nullptr;
+	Gtk::Button*   _btn_sess_open  = nullptr;
+	Gtk::Button*   _btn_sess_close = nullptr;
+	Gtk::Entry*    _track_name = nullptr;
+	Gtk::Button*   _btn_track  = nullptr;
+	Gtk::ListBox*  _routes     = nullptr;
+	Gtk::Label*    _sess_state = nullptr;
+
+	/* SCARLETT */
+	Gtk::ComboBoxText*      _card_combo = nullptr;
+	Gtk::Button*            _btn_scan   = nullptr;
+	Gtk::ListBox*           _ctl_list   = nullptr;
+	Gtk::Entry*             _ctl_filter = nullptr;
+	Gtk::Label*             _scarlett_state = nullptr;
+	std::unique_ptr<AlsaMixer> _mixer;
+	std::vector<CtlElem>    _ctls;
+
+	/* PLUGINS */
+	Gtk::ListBox* _plugins   = nullptr;
+	Gtk::Button*  _btn_pcache = nullptr;
+	Gtk::Button*  _btn_pfull  = nullptr;
+	Gtk::Label*   _plug_state = nullptr;
+	/* a varredura completa demora dezenas de segundos: roda fora da thread da UI
+	 * e o fim e sinalizado pelo Dispatcher (seguro entre threads). */
+	Glib::Dispatcher _plugins_done;
+	bool             _plugins_busy = false;
+	std::thread      _scan_thread;
+
+	/* LOG */
+	Gtk::TextView* _log_view = nullptr;
+	Glib::RefPtr<Gtk::TextBuffer> _log_buf;
+	Gtk::ScrolledWindow* _log_scroll = nullptr;
+
+	/* rodapé */
+	Gtk::Label* _status = nullptr;
+
+	bool _tick_busy = false;
+	sigc::connection _tick;
+};
+
+} // namespace spook

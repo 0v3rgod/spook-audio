@@ -1,0 +1,557 @@
+#include "ui/main_window.h"
+#include "core/log.h"
+#include "core/plugins.h"
+
+#include <cstdlib>
+
+#include <glibmm.h>
+
+#ifndef LOCALEDIR
+#define LOCALEDIR "/usr/share/ardour9/locale"
+#endif
+
+namespace spook {
+
+namespace {
+
+Gtk::Label*
+dim (std::string const& text)
+{
+	Gtk::Label* l = Gtk::manage (new Gtk::Label (text));
+	l->set_xalign (0.0f);
+	l->get_style_context ()->add_class ("dim-label");
+	return l;
+}
+
+Gtk::Label*
+strong (std::string const& text)
+{
+	Gtk::Label* l = Gtk::manage (new Gtk::Label (text));
+	l->set_xalign (0.0f);
+	l->get_style_context ()->add_class ("heading");
+	return l;
+}
+
+/* caixa vertical com espaçamento + margem, já gerenciada */
+Gtk::Box*
+vbox (int spacing = 8, int margin = 12)
+{
+	Gtk::Box* b = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_VERTICAL, spacing));
+	b->set_margin_top (margin);
+	b->set_margin_bottom (margin);
+	b->set_margin_start (margin);
+	b->set_margin_end (margin);
+	return b;
+}
+
+/* no gtkmm3 quem rola e um Gtk::ScrolledWindow com um filho (add), nao set_child */
+Gtk::ScrolledWindow*
+scrolled (Gtk::Widget& child)
+{
+	Gtk::ScrolledWindow* s = Gtk::manage (new Gtk::ScrolledWindow);
+	s->add (child);
+	s->set_vexpand (true);
+	s->set_policy (Gtk::POLICY_AUTOMATIC, Gtk::POLICY_AUTOMATIC);
+	return s;
+}
+
+/* gtkmm3 nao tem get_first_child(): esvaziar e listar os filhos e por
+ * Gtk::Container::get_children() + remove(). */
+void
+clear (Gtk::Container& c)
+{
+	std::vector<Gtk::Widget*> kids = c.get_children ();
+	for (size_t i = 0; i < kids.size (); ++i) { c.remove (*kids[i]); }
+}
+
+} // namespace
+
+MainWindow::MainWindow ()
+{
+	set_title ("SPOOK AUDIO");
+	set_default_size (960, 720);
+
+	_engine.reset (new Engine);
+
+	std::string err;
+	if (!_engine->init (LOCALEDIR, err)) {
+		log_line ("[APP] FATAL: " + err);
+	}
+
+	Gtk::Notebook* nb = Gtk::manage (new Gtk::Notebook);
+	nb->append_page (*build_engine_tab (),  "ENGINE");
+	nb->append_page (*build_session_tab (), "SESSÃO");
+	nb->append_page (*build_scarlett_tab (), "SCARLETT");
+	nb->append_page (*build_plugins_tab (), "PLUGINS");
+	nb->append_page (*build_log_tab (),     "LOG");
+
+	_status = Gtk::manage (new Gtk::Label ("pronto."));
+	_status->set_xalign (0.0f);
+	_status->set_margin_top (6);
+	_status->set_margin_bottom (6);
+	_status->set_margin_start (6);
+	_status->set_margin_end (6);
+
+	Gtk::Box* root = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_VERTICAL, 0));
+	root->pack_start (*nb, true, true, 0);
+	root->pack_start (*_status, false, false, 0);
+	add (*root);
+
+	/* Preenche a lista de backends (o Dummy entra por último, ver core/engine.cc). */
+	std::vector<std::string> bs = _engine->available_backends ();
+	for (size_t i = 0; i < bs.size (); ++i) { _backend_combo->append (bs[i]); }
+	_backend_combo->set_active_text ("None (Dummy)"); /* modo seguro: nao toca som */
+
+	_sess_dir->set_text (default_session_dir ());
+
+	/* a varredura de plugins avisa o fim por aqui (vem de outra thread) */
+	_plugins_done.connect (sigc::mem_fun (*this, &MainWindow::on_plugins_scanned));
+
+	/* Poll de 500 ms: estado do motor, rotas e log. */
+	_tick = Glib::signal_timeout ().connect (sigc::mem_fun (*this, &MainWindow::on_tick), 500);
+}
+
+MainWindow::~MainWindow ()
+{
+	_tick.disconnect ();
+	/* se uma varredura ainda estiver rodando, espera ela soltar o
+	 * PluginManager/dispatcher antes de destruir este objeto. */
+	if (_scan_thread.joinable ()) { _scan_thread.join (); }
+}
+
+std::string
+MainWindow::default_session_dir () const
+{
+	const char* home = std::getenv ("HOME");
+	std::string h = home ? home : "/tmp";
+	return h + "/spook-audio-sessions/sessao";
+}
+
+void
+MainWindow::set_status (std::string const& s, bool error)
+{
+	_status->set_text (s);
+	if (error) { _status->get_style_context ()->add_class ("error"); }
+	else       { _status->get_style_context ()->remove_class ("error"); }
+}
+
+/* ------------------------------------------------------------------ ENGINE */
+
+Gtk::Widget*
+MainWindow::build_engine_tab ()
+{
+	Gtk::Box* b = vbox ();
+	b->pack_start (*strong ("Motor do Ardour (libardour linkada — sem GUI do Ardour)"), false, false, 0);
+	b->pack_start (*dim ("O backend \"None (Dummy)\" é o modo seguro: sobe o motor e processa "
+	                     "silêncio, sem abrir nenhum dispositivo de som."), false, false, 0);
+
+	Gtk::Grid* g = Gtk::manage (new Gtk::Grid);
+	g->set_row_spacing (6);
+	g->set_column_spacing (10);
+
+	int r = 0;
+	g->attach (*Gtk::manage (new Gtk::Label ("Backend")), 0, r, 1, 1);
+	_backend_combo = Gtk::manage (new Gtk::ComboBoxText);
+	_backend_combo->set_hexpand (true);
+	_backend_combo->signal_changed ().connect (sigc::mem_fun (*this, &MainWindow::on_backend_changed));
+	g->attach (*_backend_combo, 1, r++, 1, 1);
+
+	g->attach (*Gtk::manage (new Gtk::Label ("Dispositivo")), 0, r, 1, 1);
+	_device_entry = Gtk::manage (new Gtk::Entry);
+	_device_entry->set_placeholder_text ("vazio = default do backend");
+	_device_entry->set_hexpand (true);
+	g->attach (*_device_entry, 1, r++, 1, 1);
+
+	b->pack_start (*g, false, false, 0);
+
+	Gtk::Box* btns = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL, 6));
+	_btn_start = Gtk::manage (new Gtk::Button ("INICIAR MOTOR"));
+	_btn_start->signal_clicked ().connect (sigc::mem_fun (*this, &MainWindow::on_start));
+	_btn_stop = Gtk::manage (new Gtk::Button ("PARAR"));
+	_btn_stop->signal_clicked ().connect (sigc::mem_fun (*this, &MainWindow::on_stop));
+	btns->pack_start (*_btn_start, false, false, 0);
+	btns->pack_start (*_btn_stop, false, false, 0);
+	btns->set_halign (Gtk::ALIGN_START);
+	b->pack_start (*btns, false, false, 0);
+
+	_engine_state = dim ("parado.");
+	b->pack_start (*_engine_state, false, false, 0);
+	return b;
+}
+
+void
+MainWindow::on_backend_changed ()
+{
+	set_status ("backend selecionado: " + _backend_combo->get_active_text ());
+}
+
+void
+MainWindow::on_start ()
+{
+	std::string err;
+	const std::string be = _backend_combo->get_active_text ();
+	const std::string dev = _device_entry->get_text ();
+
+	if (!_engine->select_backend (be, dev, err)) { set_status (err, true); return; }
+	if (!_engine->start_engine (err))            { set_status (err, true); return; }
+
+	_engine_state->set_text ("no ar: " + _engine->backend_name ()
+	                         + "  @ " + std::to_string ((long) _engine->sample_rate ()) + " Hz");
+	set_status ("motor no ar com backend \"" + _engine->backend_name () + "\".");
+}
+
+void
+MainWindow::on_stop ()
+{
+	_engine->stop_engine ();
+	_engine_state->set_text ("parado.");
+	set_status ("motor parado.");
+}
+
+/* ----------------------------------------------------------------- SESSÃO */
+
+Gtk::Widget*
+MainWindow::build_session_tab ()
+{
+	Gtk::Box* b = vbox ();
+	b->pack_start (*strong ("Sessão"), false, false, 0);
+	b->pack_start (*dim ("Para CRIAR uma sessão o diretório não pode existir — o Ardour cria "
+	                     "tudo dentro (interchange/, peaks/, plugins/)."), false, false, 0);
+
+	Gtk::Grid* g = Gtk::manage (new Gtk::Grid);
+	g->set_row_spacing (6);
+	g->set_column_spacing (10);
+	int r = 0;
+	g->attach (*Gtk::manage (new Gtk::Label ("Diretório")), 0, r, 1, 1);
+	_sess_dir = Gtk::manage (new Gtk::Entry);
+	_sess_dir->set_hexpand (true);
+	g->attach (*_sess_dir, 1, r++, 1, 1);
+
+	g->attach (*Gtk::manage (new Gtk::Label ("Nome")), 0, r, 1, 1);
+	_sess_name = Gtk::manage (new Gtk::Entry);
+	_sess_name->set_text ("sessao");
+	_sess_name->set_hexpand (true);
+	g->attach (*_sess_name, 1, r++, 1, 1);
+	b->pack_start (*g, false, false, 0);
+
+	Gtk::Box* btns = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL, 6));
+	_btn_sess_open = Gtk::manage (new Gtk::Button ("ABRIR / CRIAR"));
+	_btn_sess_open->signal_clicked ().connect (sigc::mem_fun (*this, &MainWindow::on_session_open));
+	_btn_sess_close = Gtk::manage (new Gtk::Button ("FECHAR"));
+	_btn_sess_close->signal_clicked ().connect (sigc::mem_fun (*this, &MainWindow::on_session_close));
+	btns->pack_start (*_btn_sess_open, false, false, 0);
+	btns->pack_start (*_btn_sess_close, false, false, 0);
+	btns->set_halign (Gtk::ALIGN_START);
+	b->pack_start (*btns, false, false, 0);
+
+	_sess_state = dim ("nenhuma sessão aberta.");
+	b->pack_start (*_sess_state, false, false, 0);
+
+	Gtk::Box* trk = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL, 6));
+	_track_name = Gtk::manage (new Gtk::Entry);
+	_track_name->set_placeholder_text ("nome da trilha");
+	_track_name->set_text ("Trilha 1");
+	_track_name->set_hexpand (true);
+	_btn_track = Gtk::manage (new Gtk::Button ("NOVA TRILHA"));
+	_btn_track->signal_clicked ().connect (sigc::mem_fun (*this, &MainWindow::on_track_new));
+	trk->pack_start (*_track_name, true, true, 0);
+	trk->pack_start (*_btn_track, false, false, 0);
+	b->pack_start (*trk, false, false, 0);
+
+	b->pack_start (*strong ("Rotas"), false, false, 0);
+	_routes = Gtk::manage (new Gtk::ListBox);
+	_routes->set_selection_mode (Gtk::SELECTION_NONE);
+	b->pack_start (*scrolled (*_routes), true, true, 0);
+	return b;
+}
+
+void
+MainWindow::on_session_open ()
+{
+	std::string err;
+	if (!_engine->engine_running ()) {
+		set_status ("suba o motor primeiro (aba ENGINE).", true);
+		return;
+	}
+	if (!_engine->open_session (_sess_dir->get_text (), _sess_name->get_text (), err)) {
+		set_status (err, true);
+		return;
+	}
+	_sess_state->set_text ("sessão \"" + _engine->session_name () + "\" @ "
+	                       + std::to_string ((long) _engine->session_sample_rate ()) + " Hz");
+	refresh_routes ();
+	set_status ("sessão aberta.");
+}
+
+void
+MainWindow::on_session_close ()
+{
+	_engine->close_session ();
+	_sess_state->set_text ("nenhuma sessão aberta.");
+	refresh_routes ();
+	set_status ("sessão fechada.");
+}
+
+void
+MainWindow::on_track_new ()
+{
+	if (!_engine->session_open ()) { set_status ("nenhuma sessão aberta.", true); return; }
+	std::vector<std::string> made = _engine->add_audio_track (_track_name->get_text ());
+	refresh_routes ();
+	set_status ("trilhas criadas: " + std::to_string ((long) made.size ()));
+}
+
+void
+MainWindow::refresh_routes ()
+{
+	clear (*_routes);
+	std::vector<std::string> rs = _engine->route_names ();
+	for (size_t i = 0; i < rs.size (); ++i) {
+		Gtk::Label* l = dim (rs[i]);
+		l->set_margin_top (2);
+		l->set_margin_bottom (2);
+		_routes->append (*l);
+	}
+	if (rs.empty ()) { _routes->append (*dim ("(sem rotas)")); }
+	_routes->show_all ();
+}
+
+/* --------------------------------------------------------------- SCARLETT */
+
+Gtk::Widget*
+MainWindow::build_scarlett_tab ()
+{
+	Gtk::Box* b = vbox ();
+	b->pack_start (*strong ("Mixer do hardware (ALSA snd_ctl)"), false, false, 0);
+	b->pack_start (*dim ("Lê o mixer do cartão pela interface de CONTROLE — não abre PCM, "
+	                     "não toca som. Escrever um valor só quando você mandar."), false, false, 0);
+
+	_card_combo = Gtk::manage (new Gtk::ComboBoxText);
+	_btn_scan = Gtk::manage (new Gtk::Button ("PROCURAR CARTÕES"));
+	_btn_scan->signal_clicked ().connect (sigc::mem_fun (*this, &MainWindow::on_scarlett_scan));
+	_card_combo->signal_changed ().connect (sigc::mem_fun (*this, &MainWindow::on_scarlett_card_changed));
+
+	Gtk::Box* top = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL, 6));
+	_card_combo->set_hexpand (true);
+	top->pack_start (*_card_combo, true, true, 0);
+	top->pack_start (*_btn_scan, false, false, 0);
+	b->pack_start (*top, false, false, 0);
+
+	_ctl_filter = Gtk::manage (new Gtk::Entry);
+	_ctl_filter->set_placeholder_text ("filtrar controles (ex.: Mix A Input, Headphone…)");
+	_ctl_filter->signal_changed ().connect (sigc::mem_fun (*this, &MainWindow::refresh_ctl_list));
+	b->pack_start (*_ctl_filter, false, false, 0);
+
+	_ctl_list = Gtk::manage (new Gtk::ListBox);
+	_ctl_list->set_selection_mode (Gtk::SELECTION_NONE);
+	b->pack_start (*scrolled (*_ctl_list), true, true, 0);
+
+	_scarlett_state = dim ("");
+	b->pack_start (*_scarlett_state, false, false, 0);
+	return b;
+}
+
+void
+MainWindow::on_scarlett_scan ()
+{
+	_card_combo->remove_all ();
+	std::vector<AlsaMixer::Card> cs = AlsaMixer::cards ();
+	int first_scarlett = -1;
+	for (size_t i = 0; i < cs.size (); ++i) {
+		std::string label = std::to_string (cs[i].index) + " — " + cs[i].name
+		                  + " (" + cs[i].id + ")" + (cs[i].scarlett ? "  ◄ Scarlett" : "");
+		_card_combo->append (label);
+		if (first_scarlett < 0 && cs[i].scarlett) { first_scarlett = (int) i; }
+	}
+	if (cs.empty ()) {
+		_scarlett_state->set_text ("nenhum cartão de som encontrado.");
+		set_status ("nenhum cartão de som.", true);
+		return;
+	}
+	_card_combo->set_active (first_scarlett >= 0 ? first_scarlett : 0);
+	_scarlett_state->set_text (first_scarlett >= 0
+	    ? "Scarlett encontrada." : "Nenhuma Scarlett conectada — mostrando os outros cartões.");
+	set_status ("cartões encontrados: " + std::to_string ((long) cs.size ()));
+	on_scarlett_card_changed ();
+}
+
+void
+MainWindow::on_scarlett_card_changed ()
+{
+	std::string sel = _card_combo->get_active_text ();
+	if (sel.empty ()) { return; }
+
+	int idx = std::atoi (sel.c_str ());
+	std::string err;
+	if (!_mixer) { _mixer.reset (new AlsaMixer); }
+	if (!_mixer->open (idx, err)) { set_status (err, true); return; }
+
+	_ctls.clear ();
+	if (!_mixer->read_all (_ctls, err)) { set_status (err, true); return; }
+
+	_scarlett_state->set_text ("cartão " + std::to_string (idx) + ": "
+	                           + std::to_string ((long) _ctls.size ()) + " controles de mixer.");
+	_ctl_filter->set_text ("");   /* se o filtro ja estava vazio, nao dispara changed */
+	refresh_ctl_list ();
+	set_status ("mixer lido (somente leitura).");
+}
+
+/* Redesenha a lista de controles aplicando o filtro atual. Chamada pelo
+ * signal_changed do campo de filtro e por on_scarlett_card_changed(). */
+void
+MainWindow::refresh_ctl_list ()
+{
+	if (!_ctl_list || !_ctl_filter) { return; }
+	std::string f = _ctl_filter->get_text ();
+	clear (*_ctl_list);
+	int shown = 0;
+	for (size_t i = 0; i < _ctls.size (); ++i) {
+		if (!f.empty () && _ctls[i].name.find (f) == std::string::npos) { continue; }
+		std::string txt = _ctls[i].name + "   [" + _ctls[i].kind + "]";
+		if (_ctls[i].kind == "ENUM") { txt += " = " + _ctls[i].value_text; }
+		else if (_ctls[i].has_range) {
+			txt += " = " + std::to_string (_ctls[i].value)
+			    + " (" + std::to_string (_ctls[i].min) + ".." + std::to_string (_ctls[i].max) + ")";
+		} else { txt += " = " + std::to_string (_ctls[i].value); }
+		if (!_ctls[i].unit.empty ()) { txt += " " + _ctls[i].unit; }
+		if (!_ctls[i].writable) { txt += "  (ro)"; }
+		_ctl_list->append (*dim (txt));
+		++shown;
+	}
+	if (shown == 0) { _ctl_list->append (*dim ("(nada)")); }
+	_ctl_list->show_all ();
+}
+
+/* ----------------------------------------------------------------- PLUGINS */
+
+Gtk::Widget*
+MainWindow::build_plugins_tab ()
+{
+	Gtk::Box* b = vbox ();
+	b->pack_start (*strong ("Plugins (PluginManager do Ardour)"), false, false, 0);
+	b->pack_start (*dim ("\"Só cache\" é instantâneo. A varredura completa leva dezenas de "
+	                     "segundos e é o mesmo scan que o Ardour faz ao abrir."), false, false, 0);
+
+	Gtk::Box* btns = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL, 6));
+	_btn_pcache = Gtk::manage (new Gtk::Button ("LISTAR (SÓ CACHE)"));
+	_btn_pcache->signal_clicked ().connect (sigc::mem_fun (*this, &MainWindow::on_plugins_cache));
+	_btn_pfull = Gtk::manage (new Gtk::Button ("VARREDURA COMPLETA"));
+	_btn_pfull->signal_clicked ().connect (sigc::mem_fun (*this, &MainWindow::on_plugins_full));
+	btns->pack_start (*_btn_pcache, false, false, 0);
+	btns->pack_start (*_btn_pfull, false, false, 0);
+	btns->set_halign (Gtk::ALIGN_START);
+	b->pack_start (*btns, false, false, 0);
+
+	_plug_state = dim ("nada listado.");
+	b->pack_start (*_plug_state, false, false, 0);
+
+	_plugins = Gtk::manage (new Gtk::ListBox);
+	_plugins->set_selection_mode (Gtk::SELECTION_NONE);
+	b->pack_start (*scrolled (*_plugins), true, true, 0);
+	return b;
+}
+
+void
+MainWindow::on_plugins_cache ()
+{
+	plugins_from_cache ();
+	on_plugins_scanned ();
+}
+
+void
+MainWindow::on_plugins_full ()
+{
+	if (_plugins_busy) { set_status ("varredura já em andamento…"); return; }
+	if (_scan_thread.joinable ()) { _scan_thread.join (); }
+
+	_plugins_busy = true;
+	_btn_pcache->set_sensitive (false);
+	_btn_pfull->set_sensitive (false);
+	on_plugins_cache (); /* mostra o cache atual enquanto a varredura roda */
+	set_status ("varrendo plugins — isso leva dezenas de segundos, pode continuar usando a janela…");
+	log_line ("[PLUGINS] varredura completa iniciada em segundo plano");
+
+	/* refresh(false) e longo e nao pode travar a UI: roda numa thread e avisa
+	 * de volta pelo Dispatcher (a leitura de widgets continua na thread do GTK). */
+	_scan_thread = std::thread ([this] () {
+		plugins_full_scan ();
+		_plugins_done.emit ();
+	});
+}
+
+/* Roda na thread da UI quando a varredura termina. */
+void
+MainWindow::on_plugins_scanned ()
+{
+	_plugins_busy = false;
+	if (_btn_pcache) { _btn_pcache->set_sensitive (true); }
+	if (_btn_pfull)  { _btn_pfull->set_sensitive (true); }
+
+	clear (*_plugins);
+	std::vector<PluginEntry> l = plugin_list ();
+	for (size_t i = 0; i < l.size (); ++i) {
+		_plugins->append (*dim ("[" + l[i].type + "] " + l[i].name
+		                        + "   (" + l[i].io + ")   " + l[i].creator));
+	}
+	_plugins->show_all ();
+	_plug_state->set_text (std::to_string ((long) l.size ()) + " plugins.");
+	set_status ("plugins listados: " + std::to_string ((long) l.size ()));
+}
+
+/* --------------------------------------------------------------------- LOG */
+
+Gtk::Widget*
+MainWindow::build_log_tab ()
+{
+	Gtk::Box* b = vbox (8, 8);
+	b->pack_start (*dim ("Avisos/erros do PBD (o Ardour fala por Receiver/Transmitter) e a "
+	                     "nossa trilha de eventos."), false, false, 0);
+
+	_log_buf = Gtk::TextBuffer::create ();
+	_log_view = Gtk::manage (new Gtk::TextView (_log_buf));
+	_log_view->set_editable (false);
+	_log_view->set_monospace (true);
+	_log_scroll = scrolled (*_log_view);
+	b->pack_start (*_log_scroll, true, true, 0);
+	return b;
+}
+
+void
+MainWindow::drain_log ()
+{
+	std::vector<std::string> lines = log_drain ();
+	if (lines.empty ()) { return; }
+	for (size_t i = 0; i < lines.size (); ++i) {
+		Gtk::TextBuffer::iterator it = _log_buf->end ();
+		_log_buf->insert (it, lines[i] + "\n");
+	}
+	if (_log_scroll) {
+		Glib::RefPtr<Gtk::Adjustment> adj = _log_scroll->get_vadjustment ();
+		adj->set_value (adj->get_upper () - adj->get_page_size ());
+	}
+}
+
+/* -------------------------------------------------------------------- tick */
+
+bool
+MainWindow::on_tick ()
+{
+	if (_tick_busy) { return true; }
+	_tick_busy = true;
+
+	drain_log ();
+
+	if (_engine->engine_running ()) {
+		std::string s = "no ar: " + _engine->backend_name ()
+		              + "  @ " + std::to_string ((long) _engine->sample_rate ()) + " Hz";
+		if (_engine->session_open ()) { s += "   ·   sessão \"" + _engine->session_name () + "\""; }
+		_engine_state->set_text (s);
+	} else {
+		_engine_state->set_text ("parado.");
+	}
+
+	_tick_busy = false;
+	return true;
+}
+
+} // namespace spook

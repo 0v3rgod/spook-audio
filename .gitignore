@@ -1,0 +1,9 @@
+# Artefatos de build (nao entram no repo; o clone se builda com ./build-app.sh)
+fase4/build/app/
+fase4/build/*.o
+fase4/spook-audio
+fase4/engine/spook-audio-engine
+
+# Sobras de python/editor
+__pycache__/
+*.pyc
