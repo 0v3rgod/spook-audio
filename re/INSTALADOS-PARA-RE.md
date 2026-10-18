@@ -47,5 +47,20 @@ catálogo de controles de todos os modelos — inclui `Scarlett Gen 4 Solo.state
 — mais `iface-*.md`, `USAGE.md`, `img/`). Se algum dia faltar (ex.: atualizar
 firmware, que o SPECTER não faz): `sudo pacman -S alsa-scarlett-gui`.
 
+### Atualização 18/10/2026 (2): `carla-git` REMOVIDO — a armadilha do liblo
+`sudo pacman -Rns carla-git` (16:13) → saíram junto `python-pyqt5`,
+`python-pyqt5-sip` e **`liblo`**. O SPECTER parou de abrir: *"error while
+loading shared libraries: liblo.so.7"* — o binário linka o liblo DO SISTEMA
+(ele não estava vendorizado; o pacman não tem como saber disso: `Required By:
+None` não bastava). Fix aplicado: `liblo.so.7.7.1` (+symlinks) copiada para
+`fase4/vendor/ardour/lib/` (extraída de
+`/var/cache/pacman/pkg/liblo-1:0.36-1-x86_64.pkg.tar.zst`, sem sudo);
+`tools/vendor-ardour.sh` e `vendor/ardour/VERSION.txt` atualizados. Validado:
+`--self-test` TUDO OK · UI headless rc=0 · `ldd` do binário + TODO o vendor =
+0 libs "not found".
+**Regra para o futuro: antes de liberar `-Rns` de qualquer pacote, rodar
+`ldd` no binário e nos `.so` do vendor e mapear cada lib de sistema ao pacote
+dono (`pacman -Qoq`).**
+
 ## Artefatos da RE que ficam depois de desinstalar
 `~/spook-audio/re/**` (driver do kernel, UAPI, GResource do GUI, relatórios) — nada disso depende dos pacotes.

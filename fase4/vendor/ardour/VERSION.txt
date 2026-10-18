@@ -5,5 +5,6 @@ lib/ = /usr/lib/ardour9 completo (bundle; inclui glibc-hwcaps, LV2, backends, en
 share/ = /usr/share/ardour9 exceto media/ e web_surfaces/ (clip browser e surfaces web do gtk2_ardour)
 etc/ = /etc/ardour9 (system_config, keys/menus, clearlooks)
 lib/ extra (fora do bundle): libvamp-hostsdk.so.3, libvamp-sdk.so.2, libwebsockets.so.21 (+evlibs), libev.so.4 e libaubio.so.5 copiadas de /usr/lib (pacotes vamp-plugin-sdk, libwebsockets, libev, aubio)
+lib/ extra 2 (18/10/2026): liblo.so.7.7.1 (+symlinks liblo.so, liblo.so.7) do pacote liblo 1:0.36-1; lincada pelo libardour (o binario pede liblo.so.7); adicionada quando o 'pacman -Rns carla-git' levou a lib do sistema — extraida de /var/cache/pacman/pkg/liblo-1:0.36-1-x86_64.pkg.tar.zst, sem sudo
 pacote ardour REMOVIDO do sistema em 17/10/2026; nada aqui depende dele (self-test + UI headless validados sem ele)
 refresh: tools/vendor-ardour.sh

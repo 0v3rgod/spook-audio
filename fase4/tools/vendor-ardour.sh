@@ -40,12 +40,17 @@ cp -a "$SRC_LIB" "$V/lib"
 #     e vamp/libardourvampplugins.so;
 #   libwebsockets + evlibs (libwebsockets) -> surfaces/libardour_websockets.so e
 #     surfaces/libardour_mcp_http.so, carregadas pelo ControlProtocolManager no boot;
-#   libaubio (aubio) -> vamp/libardourvampplugins.so;  libev -> evlib do libwebsockets.
+#   libaubio (aubio) -> vamp/libardourvampplugins.so;  libev -> evlib do libwebsockets;
+#   liblo (OSC) -> lincada direto pelo binario (libardour). ADD 18/10/2026: o
+#     "pacman -Rns carla-git" levou o liblo do sistema e o SPECTER nao abria mais
+#     ("liblo.so.7: cannot open shared object file"). Se /usr/lib nao tiver mais
+#     (pacote removido), extraia do cache do pacman (sem sudo):
+#       tar --zstd -xf /var/cache/pacman/pkg/liblo-*.pkg.tar.zst && cp usr/lib/liblo.so* vendor/ardour/lib/
 # Copiamos para o vendor para o SPECTER nao depender desses pacotes em runtime.
 SRC_SYS=/usr/lib
 for base in libvamp-hostsdk.so libvamp-sdk.so libwebsockets.so \
             libwebsockets-evlib_ev.so libwebsockets-evlib_glib.so libwebsockets-evlib_uv.so \
-            libev.so libaubio.so; do
+            libev.so libaubio.so liblo.so; do
   ok=0
   for f in "$SRC_SYS/$base"*; do
     [ -e "$f" ] || continue
@@ -78,6 +83,7 @@ cp -a "$SRC_ETC/." "$V/etc/"
   printf 'share/ = /usr/share/ardour9 exceto media/ e web_surfaces/ (clip browser e surfaces web do gtk2_ardour)\n'
   printf 'etc/ = /etc/ardour9 (system_config, keys/menus, clearlooks)\n'
   printf 'lib/ extra (fora do bundle): libvamp-hostsdk.so.3, libvamp-sdk.so.2, libwebsockets.so.21 (+evlibs), libev.so.4 e libaubio.so.5 copiadas de /usr/lib (pacotes vamp-plugin-sdk, libwebsockets, libev, aubio)\n'
+  printf 'lib/ extra 2 (18/10/2026): liblo.so.7.7.1 (+symlinks liblo.so, liblo.so.7) do pacote liblo 1:0.36-1; lincada pelo libardour; adicionada apos o -Rns carla-git levar a lib do sistema (extraida do cache do pacman)\n'
   printf 'refresh: tools/vendor-ardour.sh\n'
 } > "$V/VERSION.txt"
 

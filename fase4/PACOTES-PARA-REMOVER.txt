@@ -30,9 +30,18 @@ Servidor X headless usado APENAS para testar a janela (regra do AGENTS.md:
 nunca abrir janela na sessão Wayland do Taylor — Xvfb é um X separado).
 Sai quando não houver mais teste headless a fazer.
 
-=== 4. carla-git (opcional, pode sair quando quiser) ===
+=== 4. REMOVIDO em 18/10/2026: carla-git (1:2.5.1.r571) ===
 O SPECTER NÃO linka nem executa o Carla (o rack ficou na Fase 2, só arquivos
-.carxp). Nada do app atual depende dele.
+.carxp). O `-Rns` levou junto python-pyqt5, python-pyqt5-sip e liblo (deps).
+⚠️ ARMADILHA (por isso este texto): o binário do SPECTER linkava liblo.so.7
+DO SISTEMA — o pacman não registra isso ("Required By: None" não bastava) — e
+o app parou de abrir: "error while loading shared libraries: liblo.so.7".
+FIX já aplicado (sem sudo): liblo.so.7.7.1 (+symlinks) vendorizada em
+vendor/ardour/lib/ (extraída de /var/cache/pacman/pkg/liblo-1:0.36-1-*.zst);
+tools/vendor-ardour.sh e vendor/ardour/VERSION.txt atualizados. Validado:
+--self-test TUDO OK · UI headless rc=0 · ldd do binário + TODO o vendor = 0
+libs faltando. python-pyqt5/sip não eram usados por nada.
+Se um dia quiser o Carla de volta: yay -S carla-git  (AUR).
 
 === 5. alsa-scarlett-gui (0.5.1-2) ===
 Substituído pelo painel SCARLETT dentro do SPECTER. VALIDADO em 18/10/2026
