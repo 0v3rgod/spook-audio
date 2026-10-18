@@ -42,6 +42,14 @@ a ESCRITA foi validada no hardware (Line In 1 Level, via spook::AlsaMixer —
 a mesma classe da aba; o caminho snd_ctl_elem_write é idêntico). Pode
 remover quando quiser.
 
+REMOÇÃO LIBERADA em 18/10/2026 (Taylor pediu): docs do pacote preservadas no
+repo em re/alsa-scarlett-gui/docs/ (demo/*.state de TODOS os modelos, incl.
+"Scarlett Gen 4 Solo.state"; iface-*.md; USAGE.md; img/) e conferido que nada
+mais depende dele (Required By: None; pacman -Rns --print mostra SÓ ele, sem
+dependências). Comando:  sudo pacman -Rns alsa-scarlett-gui
+Se algum dia faltar (ex.: update de firmware, que o SPECTER não faz):
+sudo pacman -S alsa-scarlett-gui  (está no repo extra, oficial).
+
 === 6. Sobra final (com confirmação) ===
 Os apps antigos em python (~/spook-audio/bin/, spookaudio/, spook-audio.py,
 ~/spook-audio/spook-audio.desktop) ficam para o encerramento do projeto.

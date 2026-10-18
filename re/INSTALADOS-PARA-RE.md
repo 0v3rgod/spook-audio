@@ -28,8 +28,24 @@ sudo -n pacman -Qdt            # confere órfãos deixados pelas dependências
 suil, fltk, wxwidgets-*, sfizz-lib, ...) desde que nada mais precise delas.
 
 ## O que NÃO pode ser removido (é a base do Taylor, não entrou nesta lista)
-`ardour` `carla-git` `alsa-scarlett-gui` `pipewire*` `wireplumber` `qpwgraph` `helvum` `pavucontrol`
+`ardour` `carla-git` `pipewire*` `wireplumber` `qpwgraph` `helvum` `pavucontrol`
 `fluidsynth` `jack-example-tools` `gdb` `openbox` `xorg-xinit` `vlc-plugin-alsa`
+
+### Atualização 18/10/2026: `alsa-scarlett-gui` liberado para remoção
+O painel SCARLETT do próprio SPECTER (aba 5) substitui o app: lê todos os
+controles do driver scarlett2 (Line In 1/2, Air, Phantom, Direct Monitor,
+PCM/mixes) e a escrita foi validada no hardware — resumo em
+`fase4/PACOTES-PARA-REMOVER.txt`, item 5. Nada do sistema depende dele
+(`Required By: None`, sem autostart) e o SPECTER não referencia nada do pacote
+(fala ALSA por `snd_ctl` direto).
+```bash
+sudo pacman -Rns alsa-scarlett-gui   # --print conferido: sai SÓ ele (o carla não repete)
+sudo pacman -Qdt                     # órfãos depois (esperado: nada)
+```
+Docs do pacote preservadas em `re/alsa-scarlett-gui/docs/` (`demo/*.state` =
+catálogo de controles de todos os modelos — inclui `Scarlett Gen 4 Solo.state`
+— mais `iface-*.md`, `USAGE.md`, `img/`). Se algum dia faltar (ex.: atualizar
+firmware, que o SPECTER não faz): `sudo pacman -S alsa-scarlett-gui`.
 
 ## Artefatos da RE que ficam depois de desinstalar
 `~/spook-audio/re/**` (driver do kernel, UAPI, GResource do GUI, relatórios) — nada disso depende dos pacotes.
