@@ -1,26 +1,26 @@
 /*
- * SPOOK AUDIO — binario unico (Fase 4)
+ * SPOOK AUDIO / SPECTER — binário único (Fase 4)
  *
- * Um UNICO processo que fala direto com o core do Ardour (libardour), mais o
- * mixer de hardware via ALSA snd_ctl. NAO executa `ardour9` nem `carla`.
+ * Um ÚNICO processo com motor de áudio próprio (libardour) + mixer de hardware
+ * via ALSA snd_ctl. NÃO executa `ardour9` nem `carla` nem nenhum app externo.
  *
  * Modos:
- *   spook-audio                     abre a janela (padrao)
- *   spook-audio --backends          lista os backends do Ardour e sai
- *   spook-audio --self-test         teste de fumaca SEM GUI (Dummy, sem som)
- *   spook-audio --version           versao e revisao do core
+ *   spook-audio                     abre a janela (padrão)
+ *   spook-audio --backends          lista os backends de áudio e sai
+ *   spook-audio --self-test         teste de fumaça SEM GUI (Dummy, sem som)
+ *   spook-audio --version           versão e revisão do core
  *   spook-audio --help              isto
  *
- * Autonomia: o runtime do Ardour vive EMBUTIDO em vendor/ardour (ao lado do
- * binario). O app define sozinho ARDOUR_DLL_PATH / ARDOUR_DATA_PATH /
- * ARDOUR_CONFIG_PATH / VAMP_PATH (se nao vierem do ambiente) e NAO depende
+ * Autonomia: o runtime do motor vive EMBUTIDO em vendor/ardour (ao lado do
+ * binário). O app define sozinho ARDOUR_DLL_PATH / ARDOUR_DATA_PATH /
+ * ARDOUR_CONFIG_PATH / VAMP_PATH (se não vierem do ambiente) e NÃO depende
  * de /usr/lib/ardour9 nem do pacote `ardour` instalado. O script ./app.sh
  * exporta os mesmos caminhos explicitamente.
  *
- * UI: gtkmm-3.0 — NAO gtkmm-4.0. O libardour e glibmm-2.4/sigc++-2.0 e as duas
- * familias de ABI nao convivem no mesmo processo (ver ui/main_window.h).
+ * UI: gtkmm-3.0 — NÃO gtkmm-4.0. O libardour e glibmm-2.4/sigc++-2.0 e as duas
+ * famílias de ABI não convivem no mesmo processo (ver ui/main_window.h).
  *
- * Para teste sem a sessao grafica do usuario: SPOOK_NON_UNIQUE=1 + Broadway/Xvfb.
+ * Para teste sem a sessão gráfica do usuário: SPOOK_NON_UNIQUE=1 + Broadway/Xvfb.
  */
 #include <cstdio>
 #include <cstdlib>
@@ -48,19 +48,19 @@ void
 usage (const char* argv0)
 {
 	std::cout <<
-	  "SPECTER — motor do Ardour + mixer do hardware num so binario\n"
+	  "SPECTER — motor de áudio próprio + mixer do hardware num só binário\n"
 	  "\n"
 	  "uso: " << argv0 << " [opcoes]\n"
 	  "\n"
 	  "  (sem opcoes)      abre a janela\n"
-	  "  --backends        lista os backends disponiveis e sai\n"
-	  "  --self-test       teste de fumaca sem GUI (backend Dummy: nao toca som)\n"
+	  "  --backends        lista os backends disponíveis e sai\n"
+	  "  --self-test       teste de fumaça sem GUI (backend Dummy: não toca som)\n"
 	  "  --docs            imprime os caminhos de dados/config e sai\n"
-	  "  --version         versao + revisao do core do Ardour\n"
+	  "  --version         versão + revisão do core\n"
 	  "  --help            esta ajuda\n"
 	  "\n"
-	  "O backend \"None (Dummy)\" e o modo seguro: sobe o motor e processa\n"
-	  "silencio, sem abrir nenhum dispositivo de som.\n";
+	  "O backend \"None (Dummy)\" é o modo seguro: sobe o motor e processa\n"
+	  "silêncio, sem abrir nenhum dispositivo de som.\n";
 }
 
 /* Sobe o core e lista o que ele oferece. */
@@ -75,7 +75,7 @@ cmd_backends ()
 	}
 
 	std::vector<spook::BackendEntry> bs = engine.backend_details ();
-	std::cout << "backends do Ardour (" << bs.size () << "):\n";
+	std::cout << "backends de áudio (" << bs.size () << "):\n";
 	for (size_t i = 0; i < bs.size (); ++i) {
 		std::cout << "  - " << bs[i].name;
 		if (!bs[i].description.empty ()) { std::cout << "  — " << bs[i].description; }
@@ -137,7 +137,7 @@ cmd_self_test ()
 	char tmpl[] = "/tmp/opencode/spook-app-selftest-XXXXXX";
 	char* dir = ::mkdtemp (tmpl);
 	if (!dir) { std::cerr << "  [FALHA] mkdtemp\n"; return 4; }
-	::rmdir (dir); /* o Ardour exige que o diretorio da sessao ainda nao exista */
+	::rmdir (dir); /* o motor exige que o diretório da sessão ainda não exista */
 	std::string sdir = dir;
 
 	if (!engine.open_session (sdir, "selftest", err)) {
@@ -153,7 +153,7 @@ cmd_self_test ()
 	std::cout << "\n";
 
 	/* Valida a mesma API usada pelo Track Header do app: o nome é da Route
-	 * real do Ardour, não um apelido visual. */
+	 * real do motor, não um apelido visual. */
 	spook::Daw daw;
 	daw.attach (engine.session ());
 	if (!daw.rename_route (0, "Trilha Renomeada", err)) {
@@ -386,9 +386,9 @@ main (int argc, char* argv[])
 
 		if (a == "--version") {
 			const char* dll = std::getenv ("ARDOUR_DLL_PATH");
-			std::cout << "SPECTER — Fase 4 (binario unico: libardour + ALSA)\n"
-			          << "core do Ardour: " << ARDOUR::revision << "\n"
-			          << "libardour: " << (dll ? dll : "(nao definido)") << "  ·  sessao GUI: gtkmm-3.0\n";
+			std::cout << "SPECTER — Fase 4 (binário único: motor próprio + ALSA)\n"
+			          << "core: " << ARDOUR::revision << "\n"
+			          << "libardour: " << (dll ? dll : "(não definido)") << "  ·  sessão GUI: gtkmm-3.0\n";
 			return 0;
 		}
 

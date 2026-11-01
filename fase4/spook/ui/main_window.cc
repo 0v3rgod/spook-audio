@@ -20,9 +20,13 @@
 #include <cctype>
 #include <cmath>
 #include <ctime>
+#include <thread>
 #include <algorithm>
 #include <fstream>
 #include <sstream>
+#include <unistd.h>
+#include <signal.h>
+#include <sys/wait.h>
 
 #include <glibmm.h>
 #include <cairomm/context.h>
@@ -40,28 +44,31 @@ namespace {
  *   marca      #ff3d8b (rosa SPOOK)   acento 2 #34e1e1 (ciano)
  *   ligado     #25e08a   alerta   #ffb020   erro    #ff5566
  */
-const char* const kCss = R"CSS(
+/* Zoom base controlado via GTK CssProvider dinâmico */
+static double g_zoom_factor = 1.0;
+
+const char* const kCssBase = R"CSS(
 * {
   font-family: "JetBrains Mono", "JetBrainsMono NF", "DejaVu Sans Mono", monospace;
-  font-size: 12px;
+  font-size: 14px;
 }
 window.spook-window { background-color: #0b0d12; }
 .spook-root { background-color: #0b0d12; color: #e6e9ef; }
 .spook-glyph { font-family: "DejaVu Sans", "Symbola", sans-serif; font-size: 14px; }
 
 /* ------------------------------------------------------------- cabeçalho */
-.spook-header { background-color: #101420; border-bottom: 1px solid #232a3a; padding: 10px 14px; }
-.spook-logo { color: #ff3d8b; font-size: 20px; }
-.spook-title { color: #f4f6fa; font-size: 16px; font-weight: 700; }
-.spook-sub { color: #7f8798; font-size: 10px; }
+.spook-header { background-color: #101420; border-bottom: 2px solid #232a3a; padding: 12px 16px; }
+.spook-logo { color: #ff3d8b; font-size: 22px; }
+.spook-title { color: #f4f6fa; font-size: 18px; font-weight: 700; letter-spacing: 0.5px; }
+.spook-sub { color: #34e1e1; font-size: 10px; font-weight: 500; letter-spacing: 1px; }
 .spook-ruler { color: #4a5163; font-size: 10px; letter-spacing: 2px; }
 .spook-clock { color: #e6e9ef; font-size: 15px; font-weight: 700; }
 
-/* LED/chip de estado */
+/* LED/chip de estado - mais destaque */
 .spook-led {
   font-size: 9px; font-weight: 700; letter-spacing: 1px;
-  padding: 3px 9px; border-radius: 10px;
-  background-color: #141926; color: #5f6779; border: 1px solid #232a3a;
+  padding: 4px 10px; border-radius: 12px;
+  background-color: #141926; color: #5f6779; border: 2px solid #232a3a;
 }
 .spook-led.on   { background-color: #25e08a; color: #06140d; border-color: #25e08a; }
 .spook-led.warn { background-color: #ffb020; color: #1a1200; border-color: #ffb020; }
@@ -69,35 +76,37 @@ window.spook-window { background-color: #0b0d12; }
 .spook-led.off  { color: #5f6779; }
 
 /* ------------------------------------------------------------ transporte */
-.spook-transport { background-color: #0d111a; border-bottom: 1px solid #232a3a; padding: 9px 14px; }
+.spook-transport { background-color: #0a0e16; border-bottom: 2px solid #232a3a; padding: 10px 16px; }
 button.spook-tbtn {
-  min-width: 40px; min-height: 40px; padding: 0;
-  border-radius: 20px; border: 1px solid #2b3346;
+  min-width: 44px; min-height: 44px; padding: 0;
+  border-radius: 22px; border: 2px solid #2b3346;
   background-image: none; background-color: #1a2030; color: #cfd6e2;
-  box-shadow: none;
 }
 button.spook-tbtn:hover { background-color: #232b3f; border-color: #3b455e; color: #ffffff; }
 button.spook-tbtn:active { background-color: #10141d; }
+button.spook-tbtn:focus { outline: none; border-color: #ff3d8b; }
 button.spook-tbtn:disabled { background-color: #12161f; color: #454c5c; border-color: #1d2331; }
 button.spook-tbtn.play { background-color: #25e08a; color: #06140d; border-color: #25e08a; }
-button.spook-tbtn.play:hover { background-color: #4beba3; color: #06140d; }
+button.spook-tbtn.play:hover { background-color: #3deaa6; }
 button.spook-tbtn.armed { background-color: #ff3d8b; color: #16050d; border-color: #ff5ea0; }
 button.spook-tbtn.stop { background-color: #2a3346; color: #e6e9ef; }
-button.spook-tbtn.rec  { background-color: #3a1620; color: #ff5566; border-color: #ff5566; }
+button.spook-tbtn.rec  { background-color: #d63a4a; color: #fff0f0; border-color: #ff5566; }
+button.spook-tbtn.rec:hover { background-color: #e64a5a; }
 button.spook-tbtn.panic { background-color: #1a2030; color: #ffb020; border-color: #4a3a17; }
 
 /* readout de transporte (label pequeno em cima, valor em destaque) */
-.spook-readout { background-color: #0a0d14; border: 1px solid #232a3a; border-radius: 6px; padding: 3px 10px; }
+.spook-readout { background-color: #0a0d14; border: 2px solid #232a3a; border-radius: 8px; padding: 4px 12px; }
 .spook-readout .rl { color: #667089; font-size: 9px; letter-spacing: 1px; }
 .spook-readout .rv { color: #d7dce6; font-size: 12px; font-weight: 700; }
 .spook-readout.acc .rv { color: #34e1e1; }
+.spook-readout:focus { border-color: #ff3d8b; }
 
 /* --------------------------------------------------------------- cartões */
-.spook-card { background-color: #161b26; border: 1px solid #232a3a; border-radius: 10px; padding: 12px; }
-.spook-card.tight { padding: 8px; }
-.spook-card-title { color: #34e1e1; font-size: 10px; font-weight: 700; letter-spacing: 1px; }
-.spook-strong { color: #e6e9ef; font-size: 12px; font-weight: 700; }
-.spook-dim { color: #7f8798; font-size: 11px; }
+.spook-card { background-color: #161b26; border: 1px solid #2a3446; border-radius: 12px; padding: 14px; }
+.spook-card.tight { padding: 10px; }
+.spook-card-title { color: #34e1e1; font-size: 11px; font-weight: 700; letter-spacing: 1px; }
+.spook-strong { color: #e6e9ef; font-size: 13px; font-weight: 700; }
+.spook-dim { color: #8b93a5; font-size: 11px; }
 .spook-ok { color: #25e08a; }
 .spook-warn { color: #ffb020; }
 .spook-err { color: #ff5566; }
@@ -106,35 +115,35 @@ button.spook-tbtn.panic { background-color: #1a2030; color: #ffb020; border-colo
 
 /* ------------------------------------------------------- abas (notebook) */
 notebook.spook-tabs { background-color: transparent; border: none; }
-notebook.spook-tabs > header { background-color: #0d111a; border-bottom: 1px solid #232a3a; padding: 0 6px; }
+notebook.spook-tabs > header { background-color: #0c1018; border-bottom: 2px solid #232a3a; padding: 0 8px; }
 notebook.spook-tabs > header > tabs > tab {
-  padding: 10px 18px; color: #7f8798; background-color: transparent;
-  border: none; border-bottom: 2px solid transparent; border-radius: 0;
-  box-shadow: none;
+  padding: 12px 22px; color: #7f8798; background-color: transparent;
+  border: none; border-bottom: 3px solid transparent; border-radius: 0;
+  font-weight: 600; font-size: 10px; letter-spacing: 0.5px;
 }
 notebook.spook-tabs > header > tabs > tab:hover { color: #e6e9ef; }
-notebook.spook-tabs > header > tabs > tab:checked { color: #ff3d8b; border-bottom: 2px solid #ff3d8b; }
+notebook.spook-tabs > header > tabs > tab:checked { color: #ff3d8b; border-bottom: 3px solid #ff3d8b; }
 notebook.spook-tabs > stack { background-color: #0b0d12; padding: 0; }
 
 /* --------------------------------------------------------- channel strip */
 .spook-strip {
-  background-color: #121722; border: 1px solid #232a3a; border-radius: 8px;
-  padding: 6px 4px;
+  background-color: #121722; border: 1px solid #2a3446; border-radius: 10px;
+  padding: 8px 6px;
 }
 .spook-strip-name {
-  color: #8b93a5; font-size: 9px; font-weight: 700; letter-spacing: 0;
+  color: #9aa3b5; font-size: 9px; font-weight: 700; letter-spacing: 0.5px;
 }
 .spook-strip-name.hot { color: #34e1e1; }
-.spook-strip-val { color: #d7dce6; font-size: 11px; font-weight: 700; }
+.spook-strip-val { color: #d7dce6; font-size: 12px; font-weight: 700; }
 .spook-strip-unit { color: #667089; font-size: 9px; }
-.spook-strip.ro { border-color: #1d2331; }
+.spook-strip.ro { border-color: #1d2331; background-color: #0f141d; }
 .spook-strip.ro .spook-strip-name { color: #5f6779; }
 .spook-strip.ro .spook-strip-val { color: #6b7486; }
-.spook-strip.arm { border-color: #33405a; }
+.spook-strip.arm { border-color: #3a2a4a; background-color: #16101a; }
 .spook-strip.arm .spook-strip-val { color: #34e1e1; }
 .spook-badge {
-  font-size: 9px; font-weight: 700; padding: 2px 7px; border-radius: 6px;
-  background-color: #1b2130; color: #8b93a5; border: 1px solid #232a3a;
+  font-size: 8px; font-weight: 700; padding: 2px 8px; border-radius: 8px;
+  background-color: #1b2130; color: #8b93a5; border: 1px solid #2a3446;
 }
 .spook-badge.lv2  { color: #34e1e1; border-color: #1f5b5b; background-color: #0f1f22; }
 .spook-badge.ladspa { color: #b98bff; border-color: #4a3a6b; background-color: #171226; }
@@ -143,173 +152,185 @@ notebook.spook-tabs > stack { background-color: #0b0d12; padding: 0; }
 .spook-badge.other { color: #9aa3b5; }
 
 /* --------------------------------------------------------- faders/botões */
-scale.trough-cyn trough { background-color: #0a0d14; border: 1px solid #232a3a; border-radius: 4px; min-width: 6px; }
-scale.trough-cyn highlight { background-color: #34e1e1; border-radius: 4px; }
+scale.trough-cyn trough { background-color: #080b10; border: 2px solid #232a3a; border-radius: 5px; min-width: 7px; }
+scale.trough-cyn highlight { background-color: #34e1e1; border-radius: 5px; }
 scale.trough-cyn slider {
-  min-width: 26px; min-height: 12px;
-  background-image: none; background-color: #dfe4ee;
-  border: 1px solid #6b748a; border-radius: 3px;
+  min-width: 28px; min-height: 14px;
+  background-image: none; background-color: #e8edf5;
+  border: 2px solid #8b93a5; border-radius: 4px;
 }
+scale.trough-cyn slider:hover { background-color: #ffffff; border-color: #a0aac0; }
 scale:disabled highlight { background-color: #2a3143; }
 scale:disabled slider { background-color: #59617a; }
 
 /* medidor de CPU */
-levelbar trough { background-color: #0a0d14; border: 1px solid #232a3a; border-radius: 3px; padding: 1px; }
-levelbar block.filled { background-color: #34e1e1; border: none; border-radius: 2px; min-height: 8px; }
+levelbar trough { background-color: #080b10; border: 2px solid #232a3a; border-radius: 4px; padding: 1px; }
+levelbar block.filled { background-color: #34e1e1; border: none; border-radius: 3px; min-height: 10px; }
 levelbar.discrete block.filled { background-color: #34e1e1; }
 
 /* NÍVEIS do mixer do hardware (Level Meter do Scarlett) */
 .spook-meter-tit { color: #7f8798; font-size: 9px; font-weight: 700; letter-spacing: 1px; }
 .spook-meter-tit.forte { color: #34e1e1; }
-levelbar.spook-vu trough { min-height: 10px; min-width: 74px; background-color: #0a0d14; }
-levelbar.spook-vu block.filled { background-color: #25e08a; }
+levelbar.spook-vu trough { min-height: 12px; min-width: 80px; background-color: #080b10; border: 1px solid #232a3a; border-radius: 3px; }
+levelbar.spook-vu block.filled { background-color: #25e08a; border-radius: 2px; }
 levelbar.spook-vu block.filled.high { background-color: #ffb020; }
 levelbar.spook-vu block.filled.full { background-color: #ff5566; }
 
 button.spook-btn {
-  background-image: none; background-color: #1a2030; color: #d7dce6;
-  border: 1px solid #2b3346; border-radius: 6px; padding: 6px 12px;
-  font-size: 11px; font-weight: 700; letter-spacing: 1px; box-shadow: none;
+  background-image: none; background-color: #161d2a; color: #d7dce6;
+  border: 2px solid #2b3346; border-radius: 8px; padding: 8px 16px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
 }
-button.spook-btn:hover { background-color: #232b3f; border-color: #3b455e; color: #fff; }
-button.spook-btn:active { background-color: #10141d; }
-button.spook-btn.accent { background-color: #ff3d8b; color: #16050d; border-color: #ff3d8b; }
-button.spook-btn.accent:hover { background-color: #ff5ea0; color: #16050d; }
+button.spook-btn:hover { background-color: #1e283a; border-color: #3b455e; color: #fff; }
+button.spook-btn:active { background-color: #0e131a; }
+button.spook-btn:focus { outline: none; border-color: #ff3d8b; }
+button.spook-btn:disabled { background-color: #0d1015; color: #4a5260; border-color: #1a1f2a; }
+button.spook-btn.accent { background-color: #ff3d8b; color: #16050d; border-color: #ff5ea0; }
+button.spook-btn.accent:hover { background-color: #ff5ea0; }
 button.spook-btn.cyan { background-color: #34e1e1; color: #04161a; border-color: #34e1e1; }
-button.spook-btn.cyan:hover { background-color: #63ecec; color: #04161a; }
-button.spook-btn.danger { background-color: #3a1620; color: #ff5566; border-color: #ff5566; }
-button.spook-btn.danger:hover { background-color: #571f2c; }
+button.spook-btn.cyan:hover { background-color: #5aefe9; }
+button.spook-btn.danger { background-color: #d63a4a; color: #fff0f0; border-color: #ff5566; }
+button.spook-btn.danger:hover { background-color: #e64a5a; }
 /* estado LIGADO (Gtk::ToggleButton ativo): tem que ser inconfundível */
 button.spook-btn:checked { background-color: #ff3d8b; color: #16050d; border-color: #ff5ea0; }
-button.spook-btn.danger:checked { background-color: #ff5566; color: #1b0a0e; border-color: #ff8a95; }
+button.spook-btn.danger:checked { background-color: #d63a4a; color: #1b0a0e; border-color: #ff8a95; }
 
 entry.spook-entry {
   background-image: none; background-color: #0a0d14; color: #e6e9ef;
-  border: 1px solid #232a3a; border-radius: 6px; padding: 6px 10px; box-shadow: none;
+  border: 2px solid #232a3a; border-radius: 8px; padding: 8px 12px;
 }
 entry.spook-entry:focus { border-color: #ff3d8b; }
+entry.spook-entry:hover { border-color: #3b455e; }
 combobox.spook-combo button {
   background-image: none; background-color: #0a0d14; color: #e6e9ef;
-  border: 1px solid #232a3a; border-radius: 6px; box-shadow: none;
+  border: 2px solid #232a3a; border-radius: 8px;
 }
 combobox.spook-combo button:hover { border-color: #3b455e; }
+combobox.spook-combo button:focus { border-color: #ff3d8b; }
 
 /* --------------------------------------------------------------- rodapé */
-.spook-statusbar { background-color: #0d111a; border-top: 1px solid #232a3a; padding: 5px 12px; }
-.spook-status { color: #a8b0c0; font-size: 11px; }
-.spook-status.error { color: #ff5566; }
+.spook-statusbar { background-color: #0c111a; border-top: 2px solid #232a3a; padding: 8px 14px; }
+.spook-status { color: #b8c0d0; font-size: 12px; }
+.spook-status.error { color: #ff5566; font-weight: 600; }
 .spook-status-right { color: #667089; font-size: 10px; }
 .spook-ver { color: #4a5163; font-size: 10px; }
 
 /* ------------------------------------------------------------ listagens */
-.spook-console { background-color: #070a0f; color: #b9c2d0; }
-.spook-console text { background-color: #070a0f; color: #b9c2d0; }
-.spook-row { padding: 4px 2px; border-bottom: 1px solid #161b26; }
+.spook-console { background-color: #05070a; color: #c8d2e0; }
+.spook-console text { background-color: #05070a; color: #c8d2e0; }
+.spook-row { padding: 6px 4px; border-bottom: 1px solid #161b26; }
+.spook-row:hover { background-color: #0e131d; }
 .spook-row-idx { color: #4a5163; font-size: 10px; }
-entry.route-name-entry { font-weight: 700; padding: 3px 6px; }
+entry.route-name-entry { font-weight: 700; padding: 4px 8px; border-radius: 4px; }
 /* Arrange View: régua/lane são cairo para o playhead atualizar sem widgets
  * por bloco; o canvas continua responsivo até em sessões com muitas faixas. */
-.arrange-canvas { background-color: #07090e; border: 1px solid #232a3a; border-radius: 6px; }
+.arrange-canvas { background-color: #05070a; border: 2px solid #232a3a; border-radius: 8px; }
 .spook-empty { color: #5f6779; font-size: 11px; }
 scrollbar trough { background-color: transparent; border: none; }
-scrollbar slider { background-color: #2a3143; border-radius: 6px; min-width: 7px; min-height: 7px; }
-scrollbar slider:hover { background-color: #3b455e; }
+scrollbar slider { background-color: #2a3143; border-radius: 6px; min-width: 8px; min-height: 8px; border: 1px solid #1a1f2a; }
+scrollbar slider:hover { background-color: #3b455e; border-color: #2a3143; }
 
 /* ------------------------------------------------------- LCD do transporte */
 .spook-lcd {
-  background-color: #05070a; border: 1px solid #1b2530; border-radius: 6px;
-  padding: 3px 12px;
+  background-color: #04060b; border: 2px solid #1b2530; border-radius: 8px;
+  padding: 4px 14px;
 }
 .spook-lcd .ll { color: #4d5a6b; font-size: 9px; letter-spacing: 1px; }
-.spook-lcd .lv { color: #9fb0c0; font-size: 16px; font-weight: 700; }
+.spook-lcd .lv { color: #9fb0c0; font-size: 18px; font-weight: 700; }
 .spook-lcd.acc .lv { color: #34e1e1; }
 .spook-lcd.pink .lv { color: #ff5ea0; }
 .spook-lcd.warn .lv { color: #ffb020; }
-.spook-lcd.big .lv { font-size: 21px; }
+.spook-lcd.big .lv { font-size: 24px; }
 
 /* -------------------------------------------------- toolbar estilo Reaper */
-.spook-toolbar { background-color: #0a0e16; border-bottom: 1px solid #1b2530; padding: 6px 12px; }
+.spook-toolbar { background-color: #0a0e16; border-bottom: 2px solid #1b2530; padding: 8px 14px; }
 button.spook-tool {
-  background-image: none; background-color: #141b28; color: #b9c2d0;
-  border: 1px solid #22303f; border-radius: 4px; padding: 5px 10px;
-  font-size: 10px; font-weight: 700; letter-spacing: 0.5px; box-shadow: none;
+  background-image: none; background-color: #121926; color: #c8d2e0;
+  border: 1px solid #22303f; border-radius: 6px; padding: 7px 12px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.5px;
 }
-button.spook-tool:hover { background-color: #1d2637; border-color: #33465c; color: #fff; }
-button.spook-tool:active { background-color: #0d131d; }
+button.spook-tool:hover { background-color: #192232; border-color: #33465c; color: #fff; }
+button.spook-tool:active { background-color: #0c1119; }
+button.spook-tool:focus { outline: none; border-color: #ff3d8b; }
 button.spook-tool:checked { background-color: #ff3d8b; color: #16050d; border-color: #ff5ea0; }
-button.spook-tool.accent { color: #34e1e1; border-color: #1f4048; }
-button.spook-tool.danger { color: #ff5566; border-color: #4a2029; }
-.spook-tool-sep { color: #26313f; }
+button.spook-tool.accent { color: #34e1e1; border-color: #1f4048; background-color: #0b151c; }
+button.spook-tool.danger { color: #ff5566; border-color: #4a2029; background-color: #140d0f; }
+.spook-tool-sep { color: #26313f; font-weight: 700; }
 
 /* --------------------------------------------------- marcadores / regiões */
-.spook-mark-row { border-bottom: 1px solid #161d29; padding: 3px 2px; }
+.spook-mark-row { border-bottom: 1px solid #161d29; padding: 4px 4px; }
 .spook-mark-kind { color: #ffb020; font-size: 9px; font-weight: 700; letter-spacing: 0.5px; }
 .spook-mark-kind.loop { color: #34e1e1; }
 .spook-mark-kind.range { color: #b98bff; }
-.spook-mark-pos  { color: #34e1e1; font-size: 10px; font-weight: 700; }
+.spook-mark-pos  { color: #34e1e1; font-size: 11px; font-weight: 700; }
 .spook-mark-name { color: #c8d2e0; font-size: 11px; }
 button.spook-go {
-  min-width: 18px; min-height: 16px; padding: 0 4px;
-  background-image: none; background-color: #14202c; color: #34e1e1;
-  border: 1px solid #1f4048; border-radius: 3px; font-size: 9px; box-shadow: none;
+  min-width: 20px; min-height: 18px; padding: 0 6px;
+  background-image: none; background-color: #121d28; color: #34e1e1;
+  border: 1px solid #1f4048; border-radius: 4px; font-size: 9px; font-weight: 600;
 }
-button.spook-go:hover { background-color: #1d2e3d; color: #fff; }
+button.spook-go:hover { background-color: #192632; color: #fff; border-color: #2d5a5a; }
+button.spook-go:focus { outline: none; border-color: #ff3d8b; }
 
 /* ------------------------------------------------------------ mixer (tiras) */
 .mixer-strip {
-  background-color: #101620; border: 1px solid #22303f; border-radius: 6px;
-  padding: 6px 4px;
+  background-color: #101620; border: 1px solid #2a3446; border-radius: 8px;
+  padding: 8px 5px;
 }
-.mixer-strip.master { background-color: #17111c; border-color: #4a2440; }
+.mixer-strip.master { background-color: #17111c; border-color: #5a2a48; }
 .mixer-strip.armed  { border-color: #7a2440; }
-.mixer-name { color: #c8d2e0; font-size: 10px; font-weight: 700; }
+.mixer-name { color: #c8d2e0; font-size: 11px; font-weight: 700; letter-spacing: 0.3px; }
 .mixer-strip.master .mixer-name { color: #ff8ab8; }
 /* Track Header editável: não é label decorativo, é um nome real de Route. */
-entry.mixer-name-entry { min-height: 18px; padding: 2px 3px; font-size: 10px; font-weight: 700; }
+entry.mixer-name-entry { min-height: 20px; padding: 3px 6px; font-size: 11px; font-weight: 700; border-radius: 6px; }
 .mixer-strip.master entry.mixer-name-entry { color: #ff8ab8; }
-button.track-color { min-width: 16px; min-height: 16px; padding: 0; border-radius: 4px; }
+button.track-color { min-width: 18px; min-height: 18px; padding: 0; border-radius: 5px; border: 2px solid #2a3446; }
 button.track-color colorswatch { border-radius: 3px; }
+button.track-color:focus { outline: none; border-color: #ff3d8b; }
 .mixer-badge {
   font-size: 8px; font-weight: 700; letter-spacing: 0.5px;
-  padding: 1px 5px; border-radius: 4px;
-  background-color: #1b2130; color: #8b93a5; border: 1px solid #232a3a;
+  padding: 2px 7px; border-radius: 6px;
+  background-color: #1b2130; color: #8b93a5; border: 1px solid #2a3446;
 }
 .mixer-badge.master { color: #ff8ab8; border-color: #5a2a48; background-color: #241322; }
 .mixer-badge.midi   { color: #b98bff; border-color: #43356b; background-color: #171226; }
-.mixer-db { color: #34e1e1; font-size: 10px; font-weight: 700; }
+.mixer-db { color: #34e1e1; font-size: 11px; font-weight: 700; }
 .mixer-pan { color: #8b93a5; font-size: 9px; }
 button.spook-ms {
-  min-width: 20px; min-height: 18px; padding: 0 3px;
-  background-image: none; background-color: #171f2c; color: #7f8798;
-  border: 1px solid #22303f; border-radius: 3px;
-  font-size: 9px; font-weight: 700; box-shadow: none;
+  min-width: 22px; min-height: 20px; padding: 0 4px;
+  background-image: none; background-color: #151e2b; color: #7f8798;
+  border: 2px solid #22303f; border-radius: 4px;
+  font-size: 9px; font-weight: 700;
 }
-button.spook-ms:hover { border-color: #3b455e; color: #fff; }
+button.spook-ms:hover { border-color: #3b455e; color: #fff; background-color: #192333; }
+button.spook-ms:focus { outline: none; border-color: #ff3d8b; }
 button.spook-ms.mute:checked { background-color: #ffb020; color: #1a1200; border-color: #ffb020; }
 button.spook-ms.solo:checked { background-color: #34e1e1; color: #04161a; border-color: #34e1e1; }
 button.spook-ms.arm:checked  { background-color: #ff3d8b; color: #16050d; border-color: #ff3d8b; }
-scale.mixer-fader trough { background-color: #05070a; border: 1px solid #1b2530; border-radius: 3px; min-width: 5px; }
-scale.mixer-fader highlight { background-color: #2b6f8f; border-radius: 3px; }
+scale.mixer-fader trough { background-color: #05070a; border: 2px solid #1b2530; border-radius: 4px; min-width: 6px; }
+scale.mixer-fader highlight { background-color: #25e08a; border-radius: 4px; }
 scale.mixer-fader slider {
-  min-width: 30px; min-height: 13px;
-  background-image: none; background-color: #cfd8e6;
-  border: 1px solid #8794a8; border-radius: 3px;
+  min-width: 32px; min-height: 15px;
+  background-image: none; background-color: #dfe4ee;
+  border: 2px solid #8794a8; border-radius: 4px;
 }
-scale.mixer-pan trough { background-color: #05070a; border: 1px solid #1b2530; border-radius: 3px; min-height: 5px; }
-scale.mixer-pan highlight { background-color: #6b7486; }
+scale.mixer-fader slider:hover { background-color: #e8edf5; border-color: #a0aac0; }
+scale.mixer-pan trough { background-color: #05070a; border: 2px solid #1b2530; border-radius: 4px; min-height: 6px; }
+scale.mixer-pan highlight { background-color: #6b7486; border-radius: 4px; }
 scale.mixer-pan slider {
-  min-width: 9px; min-height: 13px;
+  min-width: 10px; min-height: 15px;
   background-image: none; background-color: #9fb0c0;
-  border: 1px solid #6b7486; border-radius: 3px;
+  border: 2px solid #6b7486; border-radius: 4px;
 }
+scale.mixer-pan slider:hover { background-color: #b0bcd8; border-color: #8794a8; }
 
 /* ------------------------------------------------- action list do Reaper */
-treeview.spook-actions { background-color: #070a0f; color: #c8d2e0; }
+treeview.spook-actions { background-color: #05070a; color: #c8d2e0; }
 treeview.spook-actions:selected { background-color: #1d2637; color: #ffffff; }
 treeview.spook-actions header button {
-  background-image: none; background-color: #101620; color: #7f8798;
-  border: none; border-bottom: 1px solid #22303f; border-radius: 0;
-  padding: 4px 8px; font-size: 10px; font-weight: 700; box-shadow: none;
+  background-image: none; background-color: #0f151e; color: #7f8798;
+  border: none; border-bottom: 2px solid #22303f; border-radius: 0;
+  padding: 6px 10px; font-size: 10px; font-weight: 700;
 }
 treeview.spook-actions header button:hover { color: #e6e9ef; }
 )CSS";
@@ -317,13 +338,58 @@ treeview.spook-actions header button:hover { color: #e6e9ef; }
 /* ---------------------------------------------------------------- helpers */
 
 void
-install_theme ()
+apply_zoom_css (double zoom)
 {
-	Glib::RefPtr<Gtk::CssProvider> css = Gtk::CssProvider::create ();
-	css->load_from_data (kCss);
-	Gtk::StyleContext::add_provider_for_screen (Gdk::Screen::get_default (), css,
+	/* regenera CSS com zoom aplicado a font-size e padding */
+	std::ostringstream css;
+	css << kCssBase;
+	css << R"CSS(
+/* ========== ZOOM DINÂMICO ========== */
+* { font-size: )CSS" << (int)(14 * zoom) << R"CSS(px; }
+.spook-glyph { font-size: )CSS" << (int)(14 * zoom) << R"CSS(px; }
+.spook-title { font-size: )CSS" << (int)(16 * zoom) << R"CSS(px; }
+.spook-sub { font-size: )CSS" << (int)(10 * zoom) << R"CSS(px; }
+.spook-ruler { font-size: )CSS" << (int)(10 * zoom) << R"CSS(px; }
+.spook-clock { font-size: )CSS" << (int)(15 * zoom) << R"CSS(px; }
+.spook-led { font-size: )CSS" << (int)(9 * zoom) << R"CSS(px; padding: )CSS" << (int)(3 * zoom) << R"CSS(px )CSS" << (int)(9 * zoom) << R"CSS(px; border-radius: )CSS" << (int)(10 * zoom) << R"CSS(px; }
+button.spook-tbtn { min-width: )CSS" << (int)(40 * zoom) << R"CSS(px; min-height: )CSS" << (int)(40 * zoom) << R"CSS(px; border-radius: )CSS" << (int)(20 * zoom) << R"CSS(px; }
+.spook-readout { border-radius: )CSS" << (int)(6 * zoom) << R"CSS(px; padding: )CSS" << (int)(3 * zoom) << R"CSS(px )CSS" << (int)(10 * zoom) << R"CSS(px; }
+.spook-readout .rl { font-size: )CSS" << (int)(9 * zoom) << R"CSS(px; }
+.spook-readout .rv { font-size: )CSS" << (int)(12 * zoom) << R"CSS(px; }
+.spook-card { border-radius: )CSS" << (int)(10 * zoom) << R"CSS(px; padding: )CSS" << (int)(12 * zoom) << R"CSS(px; }
+.spook-card.tight { padding: )CSS" << (int)(8 * zoom) << R"CSS(px; }
+.spook-card-title { font-size: )CSS" << (int)(10 * zoom) << R"CSS(px; }
+.spook-strong { font-size: )CSS" << (int)(12 * zoom) << R"CSS(px; }
+.spook-dim { font-size: )CSS" << (int)(11 * zoom) << R"CSS(px; }
+.spook-strip { border-radius: )CSS" << (int)(8 * zoom) << R"CSS(px; padding: )CSS" << (int)(6 * zoom) << R"CSS(px )CSS" << (int)(4 * zoom) << R"CSS(px; }
+.spook-strip-name { font-size: )CSS" << (int)(9 * zoom) << R"CSS(px; }
+.spook-strip-val { font-size: )CSS" << (int)(11 * zoom) << R"CSS(px; }
+.spook-strip-unit { font-size: )CSS" << (int)(9 * zoom) << R"CSS(px; }
+notebook.spook-tabs > header > tabs > tab { padding: )CSS" << (int)(10 * zoom) << R"CSS(px )CSS" << (int)(18 * zoom) << R"CSS(px; border-bottom-width: )CSS" << (int)(2 * zoom) << R"CSS(px; }
+.spook-row { padding: )CSS" << (int)(4 * zoom) << R"CSS(px; }
+.spook-badge { padding: )CSS" << (int)(2 * zoom) << R"CSS(px )CSS" << (int)(6 * zoom) << R"CSS(px; border-radius: )CSS" << (int)(4 * zoom) << R"CSS(px; font-size: )CSS" << (int)(9 * zoom) << R"CSS(px; }
+.spook-vu { min-height: )CSS" << (int)(14 * zoom) << R"CSS(px; }
+.spook-meter-tit { font-size: )CSS" << (int)(10 * zoom) << R"CSS(px; }
+.spook-meter-tit.forte { font-size: )CSS" << (int)(11 * zoom) << R"CSS(px; }
+.mixer-strip { min-width: )CSS" << (int)(92 * zoom) << R"CSS(px; }
+.mixer-name-entry { min-width: )CSS" << (int)(70 * zoom) << R"CSS(px; }
+.mixer-fader { min-height: )CSS" << (int)(130 * zoom) << R"CSS(px; min-width: )CSS" << (int)(32 * zoom) << R"CSS(px; }
+.mixer-pan { min-width: )CSS" << (int)(78 * zoom) << R"CSS(px; }
+)CSS";
+
+	Glib::RefPtr<Gtk::CssProvider> provider = Gtk::CssProvider::create ();
+	provider->load_from_data (css.str ());
+	Gtk::StyleContext::add_provider_for_screen (Gdk::Screen::get_default (), provider,
 	                                            GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 }
+
+void
+install_theme ()
+{
+	apply_zoom_css (g_zoom_factor);
+}
+
+
 
 void
 cls (Gtk::Widget& w, const char* c)
@@ -647,14 +713,14 @@ MainWindow::MainWindow ()
 	Gtk::Notebook* nb = Gtk::manage (new Gtk::Notebook);
 	cls (*nb, "spook-tabs");
 	_nb = nb;
-	nb->append_page (*build_mixer_tab (),   *label (" MIXER "));
-	nb->append_page (*build_arrange_tab (), *label (" ARRANJO "));
-	nb->append_page (*build_session_tab (), *label (" SESSÃO "));
-	nb->append_page (*build_actions_tab (), *label (" AÇÕES "));
-	nb->append_page (*build_engine_tab (),  *label (" ENGINE "));
-	nb->append_page (*build_scarlett_tab (),*label (" SCARLETT "));
-	nb->append_page (*build_plugins_tab (), *label (" PLUGINS "));
-	nb->append_page (*build_log_tab (),     *label (" LOG "));
+	nb->append_page (*build_mixer_tab (),    *label (" MIXER "));
+	nb->append_page (*build_arrange_tab (),  *label (" ARRANJO "));
+	nb->append_page (*build_session_tab (),  *label (" SESSÃO "));
+	nb->append_page (*build_actions_tab (),  *label (" AÇÕES "));
+	nb->append_page (*build_engine_tab (),   *label (" ENGINE "));
+	nb->append_page (*build_scarlett_tab (), *label (" SCARLETT "));
+	nb->append_page (*build_plugins_tab (),  *label (" PLUGINS "));
+	nb->append_page (*build_log_tab (),      *label (" LOG "));
 	root->pack_start (*nb, true, true, 0);
 
 	root->pack_start (*build_statusbar (), false, false, 0);
@@ -791,7 +857,7 @@ void
 MainWindow::sync_daw ()
 {
 	_daw->attach (_engine->session ());
-	/* O Ardour NÃO cria o bus master sozinho (é o GUI que chama
+	/* O motor NÃO cria o bus master sozinho (é o GUI que chama
 	 * Session::add_master_bus) — sem master não há soma nem o canal master
 	 * no mixer. Idempotente. */
 	_daw->ensure_master_bus ();
@@ -850,15 +916,6 @@ MainWindow::build_toolbar ()
 
 	t->pack_start (*label ("│", "spook-tool-sep"), false, false, 0);
 
-	b = tool ("AÇÕES");
-	b->set_tooltip_text ("lista de ações pesquisável");
-	b->signal_clicked ().connect ([this] () { _nb->set_current_page (3); });
-	t->pack_start (*b, false, false, 0);
-
-	b = tool ("PÂNICO MIDI", "danger");
-	b->signal_clicked ().connect (sigc::mem_fun (*this, &MainWindow::on_panic));
-	t->pack_start (*b, false, false, 0);
-
 	Gtk::Label* sp = Gtk::manage (new Gtk::Label (""));
 	t->pack_start (*sp, true, true, 0);
 
@@ -881,7 +938,7 @@ MainWindow::build_header ()
 
 	Gtk::Box* tit = box (Gtk::ORIENTATION_VERTICAL, 0);
 	tit->pack_start (*label ("SPECTER", "spook-title"), false, false, 0);
-	tit->pack_start (*label ("ARDOUR CORE · ALSA · PIPEWIRE · JACK", "spook-sub"), false, false, 0);
+	tit->pack_start (*label ("SPECTER CORE · ALSA · PIPEWIRE · JACK", "spook-sub"), false, false, 0);
 	h->pack_start (*tit, false, false, 0);
 
 	Gtk::Label* spacer = Gtk::manage (new Gtk::Label (""));
@@ -900,6 +957,29 @@ MainWindow::build_header ()
 	_head_sr = label ("—", "spook-clock");
 	srbox->pack_start (*_head_sr, false, false, 0);
 	h->pack_start (*srbox, false, false, 0);
+
+	/* ---- ZOOM CONTROL ---- */
+	h->pack_start (*label ("│", "spook-tool-sep"), false, false, 0);
+	Gtk::Box* zoom_box = box (Gtk::ORIENTATION_HORIZONTAL, 6);
+	zoom_box->pack_start (*label ("ZOOM", "spook-ruler"), false, false, 0);
+	_zoom_spin = Gtk::manage (new Gtk::SpinButton (Gtk::Adjustment::create (1.0, 0.7, 2.5, 0.1, 0.5, 0.0), 0.1, 1));
+	_zoom_spin->set_numeric (true);
+	_zoom_spin->set_size_request (70, -1);
+	_zoom_spin->set_tooltip_text ("Escala global da UI (0.7x - 2.5x)");
+	_zoom_spin->signal_value_changed ().connect ([this] () {
+		g_zoom_factor = _zoom_spin->get_value ();
+		apply_zoom_css (g_zoom_factor);
+	});
+	zoom_box->pack_start (*_zoom_spin, false, false, 0);
+	Gtk::Button* btn_zoom_reset = tool ("⟲", nullptr);
+	btn_zoom_reset->set_tooltip_text ("Reset zoom (1.0x)");
+	btn_zoom_reset->signal_clicked ().connect ([this] () {
+		g_zoom_factor = 1.0;
+		if (_zoom_spin) _zoom_spin->set_value (1.0);
+		apply_zoom_css (1.0);
+	});
+	zoom_box->pack_start (*btn_zoom_reset, false, false, 0);
+	h->pack_start (*zoom_box, false, false, 0);
 
 	return h;
 }
@@ -965,7 +1045,7 @@ MainWindow::build_transport ()
 	t->pack_start (*lcd ("TEMPO", &_lcd_time), false, false, 0);
 	t->pack_start (*lcd ("AMOSTRAS", &_lcd_samples), false, false, 0);
 
-	/* BPM + fórmula de compasso (o tempo do Ardour é o do mapa da sessão) */
+	/* BPM + fórmula de compasso (o tempo do motor é o do mapa da sessão) */
 	Gtk::Box* tempo = box (Gtk::ORIENTATION_HORIZONTAL, 6);
 	cls (*tempo, "spook-lcd");
 	Gtk::Label* bl = label ("BPM", "ll");
@@ -1030,7 +1110,7 @@ pinta_zonas (Cairo::RefPtr<Cairo::Context> const& cr, double x, double w, double
 } // namespace
 
 /* "L37" / "C" / "R37" a partir do valor cru e do alcance REAL do controle de
- * pan (o panner mono do Ardour vai de 0 a 1 com centro em 0,5; o estéreo, de
+ * pan (o panner mono do motor vai de 0 a 1 com centro em 0,5; o estéreo, de
  * -1 a 1). Normaliza pelo centro — sem isso o centro do panner mono sai "R50". */
 std::string
 pan_txt (double pan, double lo, double hi)
@@ -1180,10 +1260,12 @@ MainWindow::build_mixer_tab ()
 
 	_mixer_box = box (Gtk::ORIENTATION_HORIZONTAL, 6);
 	_mixer_box->set_valign (Gtk::ALIGN_FILL);
+	_mixer_box->set_hexpand (false);
 
 	Gtk::ScrolledWindow* sc = Gtk::manage (new Gtk::ScrolledWindow);
 	sc->add (*_mixer_box);
 	sc->set_policy (Gtk::POLICY_AUTOMATIC, Gtk::POLICY_NEVER);
+	sc->set_hexpand (true);
 	sc->set_vexpand (true);
 	b->pack_start (*sc, true, true, 0);
 
@@ -1453,7 +1535,7 @@ MainWindow::refresh_mixer ()
  * Inspirado na Arrange View do Studio One e na Tracks Area do Logic: a régua
  * temporal fica acima, as faixas ficam em lanes e as seções globais são
  * blocos coloridos. Nesta etapa o modelo real são Location::IsRangeMarker do
- * Ardour — portanto as seções sobrevivem save/reopen e servem inclusive para
+ * SPECTER — portanto as seções sobrevivem save/reopen e servem inclusive para
  * loop, markers e export. Não fingimos que os blocos sejam áudio gravado. */
 
 Gtk::Widget*
@@ -1522,8 +1604,6 @@ MainWindow::build_arrange_tab ()
 
 	_arrange_canvas = Gtk::manage (new Gtk::DrawingArea);
 	cls (*_arrange_canvas, "arrange-canvas");
-	_arrange_canvas->set_size_request (-1, 420);
-	_arrange_canvas->set_vexpand (true);
 	_arrange_canvas->add_events (Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK | Gdk::POINTER_MOTION_MASK);
 	_arrange_canvas->signal_draw ().connect ([this] (Cairo::RefPtr<Cairo::Context> const& cr) -> bool {
 		const Gtk::Allocation a = _arrange_canvas->get_allocation ();
@@ -1535,14 +1615,26 @@ MainWindow::build_arrange_tab ()
 		const int beats = _daw->attached () ? _daw->meter_beats () : 4;
 		const double samples_bar = sr * (60.0 / bpm) * beats;
 		const int visible_bars = _arrange_zoom ? (int) std::lround (_arrange_zoom->get_value ()) : 32;
-		const double px_bar = std::max (10.0, (w - left) / visible_bars);
 		const std::vector<RouteStrip> ss = _daw->attached () ? _daw->strips () : std::vector<RouteStrip> ();
 		const std::vector<MarkerInfo> ms = _daw->attached () ? _daw->markers () : std::vector<MarkerInfo> ();
+		const std::vector<ClipInfo> clips_all = _daw->attached () ? _daw->clips () : std::vector<ClipInfo> ();
 		const double lane_h = std::max (52.0, (h - ruler) / std::max (1, (int) ss.size ()));
 
-		/* régua e grid de compassos */
+		/* calcula total de compassos da sessão (igual em refresh_arrange) */
+		long long session_end_samples = 0;
+		for (size_t i = 0; i < ms.size (); ++i) {
+			if (ms[i].kind == "REGIÃO" && ms[i].end > session_end_samples) { session_end_samples = ms[i].end; }
+		}
+		for (size_t i = 0; i < clips_all.size (); ++i) {
+			if (clips_all[i].end > session_end_samples) { session_end_samples = clips_all[i].end; }
+		}
+		if (session_end_samples == 0) { session_end_samples = (long long) (sr * 60.0 * 4.0); }
+		const int total_bars = std::max (visible_bars, (int) std::ceil ((double) session_end_samples / samples_bar));
+		const double px_bar = std::max (10.0, (w - left) / total_bars);
+
+		/* régua e grid de compassos - desenha TODOS os compassos */
 		cr->set_source_rgb (0.055, 0.071, 0.10); cr->rectangle (0, 0, w, ruler); cr->fill ();
-		for (int bar = 0; bar <= visible_bars; ++bar) {
+		for (int bar = 0; bar <= total_bars; ++bar) {
 			const double x = left + bar * px_bar;
 			cr->set_source_rgba (0.20, 0.26, 0.35, bar % 4 == 0 ? 0.75 : 0.36);
 			cr->rectangle (x, 0, 1, h); cr->fill ();
@@ -1684,9 +1776,14 @@ MainWindow::build_arrange_tab ()
 		return true;
 	});
 
-	Gtk::ScrolledWindow* sc = Gtk::manage (new Gtk::ScrolledWindow);
-	sc->add (*_arrange_canvas); sc->set_policy (Gtk::POLICY_AUTOMATIC, Gtk::POLICY_AUTOMATIC); sc->set_vexpand (true);
-	b->pack_start (*sc, true, true, 0);
+	/* ScrolledWindow para scroll horizontal do arranger */
+	Gtk::ScrolledWindow* arrange_sc = Gtk::manage (new Gtk::ScrolledWindow);
+	arrange_sc->add (*_arrange_canvas);
+	arrange_sc->set_policy (Gtk::POLICY_AUTOMATIC, Gtk::POLICY_AUTOMATIC);
+	arrange_sc->set_hexpand (true);
+	arrange_sc->set_vexpand (true);
+	arrange_sc->set_min_content_width (800);
+	b->pack_start (*arrange_sc, true, true, 0);
 	return b;
 }
 
@@ -1754,7 +1851,7 @@ MainWindow::on_arranger_import_audio ()
 	choose.add_button ("CANCELAR", Gtk::RESPONSE_CANCEL);
 	choose.add_button ("IMPORTAR", Gtk::RESPONSE_OK);
 	Glib::RefPtr<Gtk::FileFilter> filter = Gtk::FileFilter::create ();
-	filter->set_name ("Áudio suportado pelo Ardour");
+	filter->set_name ("Áudio suportado pelo SPECTER");
 	filter->add_mime_type ("audio/*"); filter->add_pattern ("*.wav"); filter->add_pattern ("*.flac"); filter->add_pattern ("*.aiff"); filter->add_pattern ("*.mp3"); filter->add_pattern ("*.ogg");
 	choose.add_filter (filter);
 	if (choose.run () != Gtk::RESPONSE_OK) { return; }
@@ -1897,12 +1994,34 @@ MainWindow::refresh_arrange ()
 	if (!_arrange_canvas) { return; }
 	if (!_daw->attached ()) {
 		if (_arrange_state) { _arrange_state->set_text ("abra uma sessão para criar seções."); }
+		_arrange_canvas->set_size_request (-1, 420);
 		_arrange_canvas->queue_draw (); return;
 	}
 	const std::vector<RouteStrip> ss = _daw->strips ();
 	const std::vector<MarkerInfo> ms = _daw->markers ();
 	const std::vector<ClipInfo> cs = _daw->clips ();
 	int secoes = 0; for (size_t i = 0; i < ms.size (); ++i) { if (ms[i].kind == "REGIÃO") { ++secoes; } }
+
+	/* calcula largura total do canvas baseada no fim da sessão */
+	long long session_end_samples = 0;
+	for (size_t i = 0; i < ms.size (); ++i) {
+		if (ms[i].kind == "REGIÃO" && ms[i].end > session_end_samples) { session_end_samples = ms[i].end; }
+	}
+	for (size_t i = 0; i < cs.size (); ++i) {
+		if (cs[i].end > session_end_samples) { session_end_samples = cs[i].end; }
+	}
+	if (session_end_samples == 0) { session_end_samples = (long long) (48000.0 * 60.0 * 4.0); }
+
+	const double sr = _engine->session_sample_rate () > 0 ? _engine->session_sample_rate () : 48000.0;
+	const double bpm = _daw->bpm () > 1.0 ? _daw->bpm () : 120.0;
+	const int beats = _daw->meter_beats ();
+	const double samples_bar = sr * (60.0 / bpm) * beats;
+	const int visible_bars = _arrange_zoom ? (int) std::lround (_arrange_zoom->get_value ()) : 32;
+	const int total_bars = std::max (visible_bars, (int) std::ceil ((double) session_end_samples / samples_bar));
+	const double px_bar = std::max (10.0, 1920.0 / visible_bars);
+	const int canvas_w = (int) (150.0 + total_bars * px_bar + 50.0);
+	_arrange_canvas->set_size_request (canvas_w, 420);
+
 	if (_arrange_midi_track) {
 		const Glib::ustring anterior = _arrange_midi_track->get_active_text ();
 		_arrange_midi_track->remove_all ();
@@ -2604,7 +2723,7 @@ MainWindow::build_session_tab ()
 	btns->pack_start (*_btn_sess_open, false, false, 0);
 	btns->pack_start (*_btn_sess_close, false, false, 0);
 	c1->pack_start (*btns, false, false, 0);
-	c1->pack_start (*dim ("Para CRIAR, o diretório não pode existir — o Ardour cria tudo dentro "
+	c1->pack_start (*dim ("Para CRIAR, o diretório não pode existir — o SPECTER cria tudo dentro "
 	                      "(interchange/, peaks/, plugins/)."), false, false, 0);
 	_sess_state = dim ("nenhuma sessão aberta.");
 	c1->pack_start (*_sess_state, false, false, 0);
@@ -3323,9 +3442,9 @@ Gtk::Widget*
 MainWindow::build_plugins_tab ()
 {
 	Gtk::Box* b = box (Gtk::ORIENTATION_VERTICAL, 10, 12);
-	b->pack_start (*strong ("Plugins (PluginManager do Ardour)"), false, false, 0);
+	b->pack_start (*strong ("Plugins (PluginManager do SPECTER)"), false, false, 0);
 	b->pack_start (*dim ("\"Só cache\" é instantâneo. A varredura completa leva dezenas de segundos "
-	                     "e é o mesmo scan que o Ardour faz ao abrir."), false, false, 0);
+	                     "e é o mesmo scan que o SPECTER faz ao abrir."), false, false, 0);
 
 	Gtk::Box* btns = box (Gtk::ORIENTATION_HORIZONTAL, 8);
 	_btn_pcache = push ("LISTAR (SÓ CACHE)", "cyan");
@@ -3414,13 +3533,13 @@ Gtk::Widget*
 MainWindow::build_log_tab ()
 {
 	Gtk::Box* b = box (Gtk::ORIENTATION_VERTICAL, 8, 10);
-	b->pack_start (*dim ("Avisos/erros do PBD (o Ardour fala por Receiver/Transmitter) e a nossa "
+	b->pack_start (*dim ("Avisos/erros do PBD (o motor fala por Receiver/Transmitter) e a nossa "
 	                     "trilha de eventos."), false, false, 0);
 
 	_log_buf = Gtk::TextBuffer::create ();
 	_log_buf->set_text (
 	    "SPECTER — FASE 4 (binário único)\n"
-	    "motor: libardour (dinâmico, SEM a GUI do Ardour)   ·   UI: gtkmm-3.0\n"
+	    "motor: libardour (dinâmico, SEM GUI externa)   ·   UI: gtkmm-3.0\n"
 	    "backend padrão: None (Dummy) — sobe o motor processando silêncio, sem som\n"
 	    "tema: escuro de estúdio   ·   abas: ENGINE · SESSÃO · SCARLETT · PLUGINS · LOG\n"
 	    "\n"
@@ -3460,7 +3579,7 @@ MainWindow::build_statusbar ()
 	cls (*s, "spook-statusbar");
 	_status = label ("pronto.", "spook-status");
 	s->pack_start (*_status, true, true, 0);
-	_status_version = label ("SPECTER v0.1 · FASE 4 · libardour + ALSA", "spook-ver");
+	_status_version = label ("SPECTER v0.1 · FASE 4 · motor próprio + ALSA", "spook-ver");
 	s->pack_start (*_status_version, false, false, 0);
 	return s;
 }

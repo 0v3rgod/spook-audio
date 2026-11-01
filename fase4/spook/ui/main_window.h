@@ -36,6 +36,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <atomic>
 
 #include <glibmm/dispatcher.h>
 #include <gtkmm.h>
@@ -313,6 +314,9 @@ class MainWindow : public Gtk::Window {
 	Glib::Dispatcher _plugins_done;
 	bool             _plugins_busy = false;
 	std::thread      _scan_thread;
+
+	/* ZOOM */
+	Gtk::SpinButton*        _zoom_spin = nullptr;
 
 	/* LOG */
 	Gtk::TextView* _log_view = nullptr;

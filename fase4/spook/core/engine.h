@@ -69,6 +69,7 @@ class Engine {
 	void close_session ();
 	std::string session_name () const;
 	double session_sample_rate () const;
+	std::string session_path () const;
 	std::vector<std::string> route_names () const;
 	/* devolve os nomes das trilhas criadas */
 	std::vector<std::string> add_audio_track (std::string const& name, unsigned int nchan = 2);

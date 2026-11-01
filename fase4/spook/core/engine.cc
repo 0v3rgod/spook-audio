@@ -277,7 +277,7 @@ Engine::open_session (std::string const& dir, std::string const& snapshot, std::
 	close_session ();
 
 	try {
-		/* Diretorio inexistente => o Ardour CRIA a sessao
+		/* Diretorio inexistente => o motor CRIA a sessao
 		 * (_is_new = !Glib::file_test(_path, IS_DIR), session_state.cc:178). */
 		_session = new Session (*_engine, dir, snapshot);
 	} catch (std::exception& e) {
@@ -313,6 +313,12 @@ double
 Engine::session_sample_rate () const
 {
 	return _session ? (double) _session->sample_rate () : 0.0;
+}
+
+std::string
+Engine::session_path () const
+{
+	return _session ? _session->path () : "";
 }
 
 std::vector<std::string>

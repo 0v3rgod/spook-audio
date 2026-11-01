@@ -449,7 +449,7 @@ Daw::import_audio_clip (int route_idx, std::string const& path, std::string& err
 	}
 	try {
 		std::shared_ptr<Source> source = SourceFactory::createExternal (DataType::AUDIO, *_session, path, 0, Source::Flag (0), true, false);
-		if (!source) { err = "o Ardour não abriu a fonte de áudio"; return false; }
+		if (!source) { err = "o motor não abriu a fonte de áudio"; return false; }
 		PBD::PropertyList props;
 		props.add (ARDOUR::Properties::start, timepos_t ((samplepos_t) 0));
 		props.add (ARDOUR::Properties::length, source->length ());
@@ -901,11 +901,11 @@ Daw::rename_route (int idx, std::string const& name, std::string& err)
 	if (name.empty ()) { err = "o nome da trilha não pode ficar vazio"; return false; }
 	const std::string antes = r->name ();
 	/* Track::set_name também mantém coerente o nome de take/diskstream e
-	 * recusa renomear uma faixa armada — regras importantes do Ardour. */
+	 * recusa renomear uma faixa armada — regras importantes do motor. */
 	Track* t = dynamic_cast<Track*> (r);
 	const bool ok = t ? t->set_name (name) : r->set_name (name);
 	if (!ok) {
-		err = "o Ardour recusou o nome (trilha armada, nome inválido ou porta em uso)";
+		err = "o motor recusou o nome (trilha armada, nome inválido ou porta em uso)";
 		return false;
 	}
 	log_line ("[SESSÃO] rota renomeada: " + antes + " -> " + r->name ());
@@ -985,7 +985,7 @@ Daw::duplicate_route (int idx, std::string& err)
 	std::vector<std::string> criadas;
 	if (modelo.is_midi) { criadas = new_midi_track (novo_nome); }
 	else                { criadas = new_audio_track (novo_nome, 2); }
-	if (criadas.empty ()) { err = "o Ardour não conseguiu criar a cópia"; return false; }
+	if (criadas.empty ()) { err = "o motor não conseguiu criar a cópia"; return false; }
 
 	/* A sessão pode ajustar o nome para evitar colisão. Localizamos a rota pelo
 	 * nome que ela de fato devolveu e aplicamos o estado de mix do original. */
