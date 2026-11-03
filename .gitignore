@@ -7,3 +7,5 @@ fase4/engine/spook-audio-engine
 # Sobras de python/editor
 __pycache__/
 *.pyc
+vendor/
+re/
