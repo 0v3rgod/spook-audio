@@ -1,0 +1,29 @@
+GNU GENERAL PUBLIC LICENSE
+Version 3, 29 June 2007
+
+Copyright (c) 2024-2026 Taylor Soares (0v3rgod)
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+---
+
+NOTE: This project links against libardour (GPL-2.0-or-later) and uses
+ALSA UAPI headers (GPL-2.0). The combined work is licensed under GPL-3.0-or-later.
+Third-party dependencies retain their respective licenses:
+- Ardour (GPL-2.0-or-later)
+- Carla (GPL-2.0-or-later)
+- liblilv / LV2 (ISC/BSD)
+- GTK4 (LGPL-2.1-or-later)
+- PipeWire (MIT)
+- JACK (GPL-2.0-or-later / LGPL-2.1-or-later)
